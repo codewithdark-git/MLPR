@@ -44,57 +44,9 @@ Models are evaluated under two conditions:
 
 ---
 
-### Document 2: System Architecture & Codebase Setup
+### Document 2: Developer Implementation Guide
 
-This document outlines the engineering requirements for the "green coder" to build the modular repository.
-
-#### 1. Tech Stack & Environment
-*   **Language:** Python 3.10+
-*   **Core Libraries:** `torch>=2.0`, `transformers`, `peft`, `accelerate`, `wandb`.
-*   **Custom Lifecycle Manager:** `pip install git+https://github.com/codewith-dark-git/huggingface-lifecycle.git` (This package is used to push training touch-points to the gamified dashboard/game page)[[22]].
-*   **Target Models:** `Qwen/Qwen2.5-7B-Instruct` or `meta-llama/Meta-Llama-3.1-8B-Instruct`.
-
-#### 2. Modular Codebase Structure
-The repository must be strictly modular, callable via a single entry point (`main.py`).
-
-```text
-mlpr-finetuning/
-├── main.py                 # Single entry point (argparse + orchestrator)
-├── configs/
-│   └── qwen2.5_7b.yaml     # Hyperparams, model path, entity vocab path
-├── src/
-│   ├── data/
-│   │   ├── dataset.py      # Loads triplets, generates prompts
-│   │   └── collator.py     # Custom data collator to compute 'entity_pos'
-│   ├── models/
-│   │   ├── lora_setup.py   # PEFT configuration (r=16, alpha=32)
-│   │   └── probe.py        # Defines the Linear Probe nn.Module
-│   ├── trainer/
-│   │   └── mlpr_trainer.py # Custom HuggingFace Trainer overriding compute_loss
-│   ├── callbacks/
-│   │   ├── lambda_scheduler.py # Updates lambda(t) based on A_mem
-│   │   └── lifecycle_hooks.py  # Integrates huggingface-lifecycle touch points
-│   └── evaluation/
-│       └── gen_eval.py      # Multi-hop generation and exact match scoring
-└── requirements.txt
-```
-
-#### 3. Weights & Biases (W&B) Integration & Locking
-*   **Initialization:** Authenticate via `WANDB_API_KEY` and set `WANDB_ENTITY` (organization).
-*   **Matrix Logging:** At the end of every epoch, the Probe weights ($W_p \in \mathbb{R}^{|\mathcal{A}| \times d}$) and LoRA $B$ matrices are converted to W&B Tables/Artifacts and logged.
-*   **Checkpoint Locking:** Model checkpoints (LoRA adapters + Probe head) are registered as W&B Artifacts. The "locked" artifact represents the final MLPR-aligned state, preventing accidental overwriting.
-
-#### 4. "Game Page" Touch Points
-Using the `huggingface-lifecycle` package, the codebase will push state changes to the interactive dashboard. Key touch points include:
-*   `EVENT_MEMORIZATION_SATURATED`: Triggered when $A_{mem} > \tau_0$.
-*   `EVENT_PROBE_ACTIVATED`: Triggered when $\lambda(t) > 0$.
-*   `EVENT_GAP_CLOSED`: Triggered if Validation $A_{gen}$ exceeds the baseline by > 5%.
-
----
-
-### Document 3: Developer Implementation Guide
-
-*Instructions for the engineer building the repository. Ensure all snippets are integrated into the modular structure defined in Document 2.*
+*Instructions for the engineer building the repository. Ensure all snippets are integrated into the modular structure defined above.*
 
 #### 1. The Custom Data Collator (src/data/collator.py)
 The collator must identify the anchor token index ($\tau_i$) dynamically.
