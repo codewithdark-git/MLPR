@@ -1,8 +1,9 @@
 """Dataset module for MLPR fine-tuning."""
 
 import json
+import os
 from typing import Dict, List, Optional
-from datasets import load_dataset, DatasetDict
+from datasets import Dataset, DatasetDict
 
 
 class MLPDataset:
@@ -13,6 +14,11 @@ class MLPDataset:
     - Memorization set (D_mem): Single-hop QA pairs for training
     - Generalization set (D_gen): Multi-hop QA pairs for evaluation only
     - Candidate set (A): Fixed set of entities for probe classification
+    
+    Supports loading from:
+    1. Local JSONL files (train_mem.jsonl, eval_gen.jsonl)
+    2. Local directory containing the above files
+    3. HuggingFace Hub datasets (fallback)
     """
     
     def __init__(
@@ -26,8 +32,9 @@ class MLPDataset:
         Initialize the MLPR dataset.
         
         Args:
-            dataset_name: HuggingFace dataset name or local path
-            entity_vocab_path: Path to entity vocabulary JSON file
+            dataset_name: Path to local dataset directory or HuggingFace dataset name.
+                         If pointing to a directory, expects train_mem.jsonl and eval_gen.jsonl
+            entity_vocab_path: Path to entity vocabulary JSON file (vocab.json)
             tokenizer: Tokenizer instance for preprocessing
             max_length: Maximum sequence length
         """
@@ -39,21 +46,90 @@ class MLPDataset:
         self.id2entity: Dict[int, str] = {}
         self.num_entities = 0
         
-        # Load dataset from HuggingFace
+        # Load dataset from local files or HuggingFace
         self.dataset = self._load_dataset()
         
         # Load entity vocabulary
         if entity_vocab_path:
             self._load_entity_vocab(entity_vocab_path)
+        else:
+            # Try to find vocab.json in the dataset directory
+            if os.path.isdir(dataset_name):
+                vocab_path = os.path.join(dataset_name, "vocab.json")
+                if os.path.exists(vocab_path):
+                    self._load_entity_vocab(vocab_path)
     
     def _load_dataset(self) -> DatasetDict:
-        """Load dataset from HuggingFace Hub."""
+        """Load dataset from local files or HuggingFace Hub."""
+        # Check if dataset_name is a local directory
+        if os.path.isdir(self.dataset_name):
+            return self._load_from_local_directory()
+        
+        # Check if dataset_name points to specific JSONL files
+        if os.path.isfile(self.dataset_name):
+            return self._load_from_jsonl_file(self.dataset_name)
+        
+        # Try to load from HuggingFace Hub
         try:
-            dataset = load_dataset(self.dataset_name)
-        except Exception:
-            # If not available on HF, create a sample dataset for testing
-            dataset = self._create_sample_dataset()
+            dataset = self._load_from_huggingface()
+            return dataset
+        except Exception as e:
+            print(f"Could not load from HuggingFace: {e}")
+            # Create a sample dataset for testing
+            return self._create_sample_dataset()
+    
+    def _load_from_local_directory(self) -> DatasetDict:
+        """Load dataset from local directory containing JSONL files."""
+        train_path = os.path.join(self.dataset_name, "train_mem.jsonl")
+        eval_path = os.path.join(self.dataset_name, "eval_gen.jsonl")
+        
+        if not os.path.exists(train_path):
+            raise FileNotFoundError(f"Training file not found: {train_path}")
+        
+        train_data = self._load_jsonl(train_path)
+        
+        if os.path.exists(eval_path):
+            eval_data = self._load_jsonl(eval_path)
+        else:
+            # If no eval file, use a portion of training data
+            eval_data = train_data[:max(1, len(train_data) // 10)]
+        
+        train_dataset = Dataset.from_list(train_data)
+        eval_dataset = Dataset.from_list(eval_data)
+        
+        return DatasetDict({
+            "train": train_dataset,
+            "eval": eval_dataset,
+            "mem": train_dataset,
+            "gen": eval_dataset
+        })
+    
+    def _load_from_jsonl_file(self, file_path: str) -> DatasetDict:
+        """Load dataset from a single JSONL file."""
+        data = self._load_jsonl(file_path)
+        dataset = Dataset.from_list(data)
+        
+        return DatasetDict({
+            "train": dataset,
+            "eval": dataset,
+            "mem": dataset,
+            "gen": dataset
+        })
+    
+    def _load_from_huggingface(self) -> DatasetDict:
+        """Load dataset from HuggingFace Hub."""
+        from datasets import load_dataset
+        dataset = load_dataset(self.dataset_name)
         return dataset
+    
+    def _load_jsonl(self, file_path: str) -> List[Dict]:
+        """Load data from a JSONL file."""
+        data = []
+        with open(file_path, 'r') as f:
+            for line in f:
+                if line.strip():
+                    data.append(json.loads(line))
+        return data
     
     def _create_sample_dataset(self) -> DatasetDict:
         """Create a sample dataset for testing purposes."""
@@ -164,16 +240,26 @@ class MLPDataset:
                 truncation=True,
                 max_length=self.max_length,
                 padding=False,
-                return_tensors=None
+                return_tensors=None,
+                return_offsets_mapping=False  # Don't include in final output
             )
             
-            # Calculate entity_pos (token index of anchor)
-            # Map character index to token index
-            char_idx = example.get("entity_end_char_idx", 0)
-            token_idx = self._char_to_token_idx(encodings, char_idx)
+            # Calculate entity_pos (token index of anchor) using offset mapping internally
+            char_idx = example.get("entity_char_end", example.get("entity_end_char_idx", 0))
+            
+            # Get offset mapping for precise character-to-token conversion
+            encodings_with_offsets = tokenizer(
+                example["text"],
+                truncation=True,
+                max_length=self.max_length,
+                padding=False,
+                return_tensors=None,
+                return_offsets_mapping=True
+            )
+            token_idx = self._char_to_token_idx(encodings_with_offsets, char_idx)
             
             encodings["entity_pos"] = token_idx
-            encodings["entity_class_id"] = example.get("entity_class_id", 0)
+            encodings["entity_class_id"] = example.get("probe_label_id", example.get("entity_class_id", 0))
             encodings["labels"] = encodings["input_ids"].copy()
             
             return encodings
@@ -181,9 +267,17 @@ class MLPDataset:
         return dataset.map(tokenize_fn, remove_columns=dataset.column_names)
     
     def _char_to_token_idx(self, encodings: Dict, char_idx: int) -> int:
-        """Convert character index to token index."""
-        # Simple heuristic: find the token that contains the character position
-        # In practice, you might want more sophisticated alignment
+        """Convert character index to token index using offset mapping."""
+        # Use offset mapping for precise character-to-token conversion
+        offset_mapping = encodings.get("offset_mapping")
+        if offset_mapping:
+            for token_idx, (char_start, char_end) in enumerate(offset_mapping):
+                if char_start <= char_idx <= char_end:
+                    return token_idx
+            # If char_idx is beyond all tokens, return the last token
+            return len(offset_mapping) - 1
+        
+        # Fallback: use word_ids method
         word_ids = encodings.word_ids()
         if word_ids is None:
             return len(encodings["input_ids"]) // 2

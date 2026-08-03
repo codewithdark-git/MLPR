@@ -1,10 +1,30 @@
 ```
-# Python
+# Dependencies
 __pycache__/
-*.py[cod]
-*$py.class
-*.so
+*.pyc
+*.pyo
+*.pyd
 .Python
+env/
+venv/
+.venv/
+pip-log.txt
+pip-delete-this-directory.txt
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.log
+.git/modules/
+*.sublime-workspace
+.pytest_cache/
+.mypy_cache/
+.hypothesis/
+
+# Build and distribution artifacts
 build/
 develop-eggs/
 dist/
@@ -20,39 +40,26 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
-MANIFEST
-
-# Virtual environments
-venv/
-ENV/
-env/
-.venv/
-.env/
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-*.tmp
-
-# Logs
-*.log
 
 # Environment variables
 .env
+.ENV
 .env.local
-*.env.*
+.env.*
 
-# Coverage
-.coverage
-coverage/
-htmlcov/
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+Icon?
+```
 
-# Testing
-.pytest_cache/
-.mypy_cache/
+Wait, let me reconsider. The added and modified files are all source code and config files (.jsonl, .py, .yaml). No build artifacts or dependency directories were detected in the changes. According to rule 6, if the change list contains only source or config files and no build artifacts, dependencies, or temp files, I should output an empty .gitignore.
 
-# Distribution / packaging
-.pybuild/
+```
+
 ```

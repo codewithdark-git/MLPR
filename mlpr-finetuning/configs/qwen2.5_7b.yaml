@@ -18,8 +18,11 @@ lora_target_modules:
   - down_proj
 
 # Dataset settings
-dataset_name: "mlpr-kb-dataset"  # HuggingFace dataset name
-entity_vocab_path: "configs/entity_vocab.json"
+# For local synthetic dataset, point to the directory containing train_mem.jsonl and eval_gen.jsonl
+# Example: dataset_name: "./dataset"
+# For HuggingFace Hub dataset, use the repo name
+dataset_name: "./dataset"  # Default: local synthetic dataset
+entity_vocab_path: null  # Will auto-load from dataset/vocab.json if null
 
 # Training settings
 per_device_train_batch_size: 4
@@ -45,3 +48,4 @@ wandb_project: "knowing_using_gap"
 
 # Lifecycle dashboard
 lifecycle_enabled: true
+hub_model_id: null  # Set to your HF username/repo for pushing checkpoints
