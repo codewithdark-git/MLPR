@@ -1,30 +1,10 @@
 ```
-# Dependencies
+# Python
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
+*.py[cod]
+*$py.class
+*.so
 .Python
-env/
-venv/
-.venv/
-pip-log.txt
-pip-delete-this-directory.txt
-.tox/
-.coverage
-.coverage.*
-.cache
-nosetests.xml
-coverage.xml
-*.cover
-*.log
-.git/modules/
-*.sublime-workspace
-.pytest_cache/
-.mypy_cache/
-.hypothesis/
-
-# Build and distribution artifacts
 build/
 develop-eggs/
 dist/
@@ -41,11 +21,39 @@ wheels/
 .installed.cfg
 *.egg
 
-# Environment variables
+# Virtual environments
+venv/
+env/
+ENV/
+.venv/
+.env/
+
+# Testing
+.coverage
+coverage/
+htmlcov/
+.nosetests
+.unit_test_results.xml
+.pytest_cache/
+.hypothesis/
+
+# Linting and type checking
+.mypy_cache/
+.pyre/
+.pytype/
+.ide/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# Environment specific
 .env
-.ENV
 .env.local
 .env.*
+!.env.example
+
+# Logs
+*.log
 
 # OS generated files
 .DS_Store
@@ -55,11 +63,4 @@ wheels/
 .Trashes
 ehthumbs.db
 Thumbs.db
-Icon?
-```
-
-Wait, let me reconsider. The added and modified files are all source code and config files (.jsonl, .py, .yaml). No build artifacts or dependency directories were detected in the changes. According to rule 6, if the change list contains only source or config files and no build artifacts, dependencies, or temp files, I should output an empty .gitignore.
-
-```
-
 ```
