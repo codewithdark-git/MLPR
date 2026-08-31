@@ -29,7 +29,7 @@ per_device_train_batch_size: 4
 per_device_eval_batch_size: 4
 gradient_accumulation_steps: 4
 num_train_epochs: 3
-learning_rate: 2e-5
+learning_rate: 2.0e-5
 warmup_ratio: 0.1
 weight_decay: 0.01
 output_dir: "./outputs"
@@ -41,6 +41,12 @@ logging_steps: 10
 lambda_0: 0.3
 tau_0: 0.9
 delta_0: 0.05
+# v2 gate metric: which A_mem signal opens the lambda gate.
+#   "generation" - free-generation exact match (idea.md v1; diagnosed
+#                  unreachable in this regime: plateaus 0-12% vs tau_0=0.9)
+#   "likelihood" - teacher-forced greedy answer-token match ("knowing")
+#   "max"        - either recall mode can open the gate (v2 recommendation)
+gate_metric: "max"
 
 # W&B settings
 wandb_entity: "your-entity"
