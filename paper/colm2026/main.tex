@@ -1,0 +1,87 @@
+\documentclass{article} % For LaTeX2e
+\usepackage[submission]{colm2026_conference}
+
+\usepackage{microtype}
+\usepackage{hyperref}
+\usepackage{url}
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{enumitem}
+\usepackage{graphicx}
+\graphicspath{{./figs/}}
+\usepackage{xcolor}
+\usepackage[ruled,vlined,linesnumbered]{algorithm2e}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning}
+\usepackage{lineno}
+
+\definecolor{darkblue}{rgb}{0, 0, 0.5}
+\hypersetup{colorlinks=true, citecolor=darkblue, linkcolor=darkblue, urlcolor=darkblue}
+
+% algorithm2e sizing for narrow columns
+\SetAlFnt{\small}
+\SetAlCapFnt{\small}
+\SetAlCapNameFnt{\small}
+
+\title{Knowing but Not Saying: Scale-Dependent Recall Saturation\\
+  and Probe-Gated Regularization in Fine-Tuned Language Models}
+
+% Authors are hidden automatically in submission mode (double-blind).
+% For the camera-ready version, replace with the real author list.
+\author{Anonymous Authors\\
+  MLPR Research Team\\
+  \texttt{mlpr@research.example} \\
+}
+
+\newcommand{\amemlf}{A_{\mathrm{mem}}^{\mathrm{lf}}}
+\newcommand{\amemem}{A_{\mathrm{mem}}^{\mathrm{em}}}
+\newcommand{\agen}{A_{\mathrm{gen}}}
+
+\begin{document}
+
+\ifcolmsubmission
+\linenumbers
+\fi
+
+\maketitle
+
+\begin{abstract}
+When a language model is fine-tuned on new factual content, two capabilities
+diverge: the model quickly becomes able to \emph{recall} an answer when the
+question is posed in the training format (knowing), while its ability to
+\emph{produce} the answer under distribution shift lags far behind (using).
+We introduce MLPR, a lightweight monitoring-and-regularization layer that
+makes this knowing--using gap measurable and actionable during training: a
+linear probe at a mid layer $l^\star$ reads entity identities from hidden
+states, a teacher-forced likelihood metric estimates recall saturation
+$\amemlf$ online, and a saturation gate ramps in a probe-alignment loss
+$\lambda(t)$ only once recall crosses a threshold $\tau_0$. We study
+Qwen2.5-0.5B and 7B-Instruct models trained for up to 50 epochs on a
+synthetic entity-question corpus with full telemetry. Three findings emerge.
+First, recall saturation is strongly scale-dependent: the 7B model crosses
+$\tau_0{=}0.8$ at epoch 24 ($\amemlf{=}0.825$ by epoch 25, $0.875$ by
+epoch 27), while the 0.5B model plateaus at $0.39$ after 50 epochs---the
+gate opens only at scale. Second, knowing and saying dissociate sharply:
+at the moment of gate activation the 7B model recalls $82.5\%$ of entities
+under teacher forcing yet answers only $2\%$ by free-generation exact match
+and $0\%$ on paraphrased generalization prompts. Third, a mid-layer probe
+detects memorization long before behavioral saturation, and all parameter
+updates concentrate in upper-layer MLP projections. We further identify and
+repair a failure mode of eval-aware learning-rate controllers---an
+unbounded decay spiral---with a bounded damping floor that preserves
+memorization dynamics. Code, telemetry, and trained adapters are released.
+\end{abstract}
+
+\input{sec_intro}
+\input{sec_method}
+\input{sec_results}
+\input{sec_end}
+
+\bibliography{refs}
+\bibliographystyle{colm2026_conference}
+
+\appendix
+\input{sec_appendix}
+
+\end{document}

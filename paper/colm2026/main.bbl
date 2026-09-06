@@ -1,0 +1,162 @@
+\begin{thebibliography}{22}
+\providecommand{\natexlab}[1]{#1}
+\providecommand{\url}[1]{\texttt{#1}}
+\expandafter\ifx\csname urlstyle\endcsname\relax
+  \providecommand{\doi}[1]{doi: #1}\else
+  \providecommand{\doi}{doi: \begingroup \urlstyle{rm}\Url}\fi
+
+\bibitem[Alain \& Bengio(2016)Alain and Bengio]{alain2017probes}
+Guillaume Alain and Yoshua Bengio.
+\newblock Understanding intermediate layers using linear classifier probes.
+\newblock \emph{arXiv preprint arXiv:1610.01644}, 2016.
+\newblock ICLR Workshop.
+
+\bibitem[Allen-Zhu \& Li(2023)Allen-Zhu and Li]{allen2023physics}
+Zeyuan Allen-Zhu and Yuanzhi Li.
+\newblock Physics of language models: Part 3.1, knowledge storage and
+  retrieval.
+\newblock \emph{arXiv preprint arXiv:2309.14316}, 2023.
+
+\bibitem[Belinkov(2022)]{belinkov2022probing}
+Yonatan Belinkov.
+\newblock Probing classifiers: Promises, shortcomings, and advances.
+\newblock \emph{Computational Linguistics}, 48\penalty0 (1):\penalty0 207--221,
+  2022.
+
+\bibitem[Bricken et~al.(2023)Bricken, Templeton, Batson, Chen, Jermyn, Conerly,
+  et~al.]{bricken2023monosemanticity}
+Trenton Bricken, Adly Templeton, Joshua Batson, Brian Chen, Adam Jermyn, Tom
+  Conerly, et~al.
+\newblock Towards monosemanticity: Sparse autoencoders for features from
+  language models.
+\newblock Transformer Circuits Thread, 2023.
+
+\bibitem[Carlini et~al.(2023)Carlini, Ippolito, Jagielski, Lee, Tram{\`e}r, and
+  Zhang]{carlini2023quantifying}
+Nicholas Carlini, Daphne Ippolito, Matthew Jagielski, Katherine Lee, Florian
+  Tram{\`e}r, and Chiyuan Zhang.
+\newblock Quantifying memorization across neural language models.
+\newblock In \emph{International Conference on Learning Representations
+  (ICLR)}, 2023.
+
+\bibitem[Dai et~al.(2022)Dai, Dong, Hao, Sui, Chang, and
+  Wei]{dai2022knowledgeneurons}
+Damai Dai, Li~Dong, Yaru Hao, Zhifang Sui, Baobao Chang, and Furu Wei.
+\newblock Knowledge neurons in pretrained transformers.
+\newblock In \emph{Proceedings of the 60th Annual Meeting of the Association
+  for Computational Linguistics (ACL)}, 2022.
+
+\bibitem[De~Cao et~al.(2021)De~Cao, Aziz, and Titov]{decao2021editing}
+Nicola De~Cao, Wilker Aziz, and Ivan Titov.
+\newblock Editing factual knowledge in language models.
+\newblock In \emph{Proceedings of the 2021 Conference on Empirical Methods in
+  Natural Language Processing (EMNLP)}, 2021.
+
+\bibitem[Elazar et~al.(2021)Elazar, Kassner, Ravfogel, Frederick, August,
+  Srikumar, Stanovsky, Tsvetkov, Strubell, et~al.]{elazar2021measuring}
+Yanai Elazar, Nora Kassner, Shauli Ravfogel, Abhilasha Frederick, Tim August,
+  Vivek Srikumar, Gabriel Stanovsky, Yulia Tsvetkov, Emma Strubell, et~al.
+\newblock Measuring consistency of text-based factual knowledge in pretrained
+  language models.
+\newblock \emph{Transactions of the Association for Computational Linguistics},
+  2021.
+\newblock ParaRel benchmark.
+
+\bibitem[Elhage et~al.(2021)Elhage, Nanda, Olsson, Henighan, Joseph,
+  et~al.]{elhage2021mathematical}
+Nelson Elhage, Neel Nanda, Catherine Olsson, Tom Henighan, Nicholas Joseph,
+  et~al.
+\newblock A mathematical framework for transformer circuits.
+\newblock Transformer Circuits Thread, 2021.
+
+\bibitem[Geva et~al.(2021)Geva, Schuster, Berant, and Levy]{geva2021ffn}
+Mor Geva, Roei Schuster, Jonathan Berant, and Omer Levy.
+\newblock Transformer feed-forward layers are key-value memories.
+\newblock In \emph{Proceedings of the 2021 Conference on Empirical Methods in
+  Natural Language Processing (EMNLP)}, 2021.
+
+\bibitem[Hewitt \& Liang(2019)Hewitt and Liang]{hewitt2019control}
+John Hewitt and Percy Liang.
+\newblock Designing and interpreting probes with control tasks.
+\newblock In \emph{Proceedings of the 2019 Conference on Empirical Methods in
+  Natural Language Processing (EMNLP-IJCNLP)}, 2019.
+
+\bibitem[Hu et~al.(2022)Hu, Shen, Wallis, Allen-Zhu, Li, Wang, Wang, and
+  Chen]{hu2022lora}
+Edward~J. Hu, Yelong Shen, Phillip Wallis, Zeyuan Allen-Zhu, Yuanzhi Li, Shean
+  Wang, Lu~Wang, and Weizhu Chen.
+\newblock {LoRA}: Low-rank adaptation of large language models.
+\newblock In \emph{International Conference on Learning Representations
+  (ICLR)}, 2022.
+
+\bibitem[Kandpal et~al.(2023)Kandpal, Deng, Roberts, Wallace, and
+  Raffel]{kandpal2023large}
+Nikhil Kandpal, Haikang Deng, Adam Roberts, Eric Wallace, and Colin Raffel.
+\newblock Large language models struggle to learn long-tail knowledge.
+\newblock In \emph{International Conference on Machine Learning (ICML)}, 2023.
+
+\bibitem[Kaplan et~al.(2020)Kaplan, McCandlish, Henighan, Brown, Chess, Child,
+  Gray, Radford, Wu, and Amodei]{kaplan2020scaling}
+Jared Kaplan, Sam McCandlish, Tom Henighan, Tom~B. Brown, Benjamin Chess, Rewon
+  Child, Scott Gray, Alec Radford, Jeffrey Wu, and Dario Amodei.
+\newblock Scaling laws for neural language models.
+\newblock \emph{arXiv preprint arXiv:2001.08361}, 2020.
+
+\bibitem[Mallen et~al.(2023)Mallen, Asai, Zhong, Das, Khashabi, and
+  Hajishirzi]{mallen2023pararel}
+Alex Mallen, Akari Asai, Victor Zhong, Rajarshi Das, Daniel Khashabi, and
+  Hannaneh Hajishirzi.
+\newblock When not to trust language models: Investigating effectiveness of
+  parametric and non-parametric memories.
+\newblock In \emph{Proceedings of the 61st Annual Meeting of the Association
+  for Computational Linguistics (ACL)}, 2023.
+
+\bibitem[Meng et~al.(2022)Meng, Bau, Andonian, and Belinkov]{meng2022rome}
+Kevin Meng, David Bau, Alex Andonian, and Yonatan Belinkov.
+\newblock Locating and editing factual associations in {GPT}.
+\newblock In \emph{Advances in Neural Information Processing Systems
+  (NeurIPS)}, volume~35, 2022.
+
+\bibitem[Meng et~al.(2023)Meng, Sharma, Andonian, Belinkov, and
+  Bau]{meng2023memit}
+Kevin Meng, Arnab~Sen Sharma, Alex Andonian, Yonatan Belinkov, and David Bau.
+\newblock Mass-editing memory in a transformer.
+\newblock In \emph{International Conference on Learning Representations
+  (ICLR)}, 2023.
+
+\bibitem[Mitchell et~al.(2022)Mitchell, Lin, Bosselut, Finn, and
+  Manning]{mitchell2022mend}
+Eric Mitchell, Charles Lin, Antoine Bosselut, Chelsea Finn, and Christopher~D.
+  Manning.
+\newblock Fast model editing at scale.
+\newblock In \emph{International Conference on Learning Representations
+  (ICLR)}, 2022.
+
+\bibitem[Power et~al.(2022)Power, Burda, Edwards, Babuschkin, and
+  Misra]{power2022grokking}
+Alethea Power, Yuri Burda, Harri Edwards, Igor Babuschkin, and Vedant Misra.
+\newblock Grokking: Generalization beyond overfitting on small algorithmic
+  datasets.
+\newblock \emph{arXiv preprint arXiv:2201.02177}, 2022.
+
+\bibitem[{Qwen Team}(2024)]{qwen2024qwen25}
+{Qwen Team}.
+\newblock Qwen2.5 technical report.
+\newblock \emph{arXiv preprint arXiv:2412.15115}, 2024.
+
+\bibitem[Tirumala et~al.(2022)Tirumala, Markosyan, Zettlemoyer, and
+  Aghajanyan]{tirumala2022memorization}
+Kushal Tirumala, Arash Markosyan, Luke Zettlemoyer, and Armen Aghajanyan.
+\newblock Memorization without overfitting: Analyzing the training dynamics of
+  large language models.
+\newblock In \emph{Advances in Neural Information Processing Systems
+  (NeurIPS)}, volume~35, 2022.
+
+\bibitem[Zhang et~al.(2017)Zhang, Bengio, Hardt, Recht, and
+  Vinyals]{zhang2017understanding}
+Chiyuan Zhang, Samy Bengio, Moritz Hardt, Benjamin Recht, and Oriol Vinyals.
+\newblock Understanding deep learning requires rethinking generalization.
+\newblock In \emph{International Conference on Learning Representations
+  (ICLR)}, 2017.
+
+\end{thebibliography}

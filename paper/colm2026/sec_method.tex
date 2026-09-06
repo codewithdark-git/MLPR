@@ -1,0 +1,165 @@
+\section{Method: Mid-Layer Probe Regularization}
+\label{sec:method}
+
+MLPR augments parameter-efficient fine-tuning with an observation pathway
+(a mid-layer probe and an online recall metric) and a control pathway (a
+saturation gate and an eval-aware controller). Figure~\ref{fig:method}
+shows the data flow; Algorithm~\ref{alg:mlpr} gives the training loop.
+
+\begin{figure*}[t]
+\centering
+\resizebox{0.985\textwidth}{!}{%
+\input{fig_method.tikz}}
+\caption{MLPR methodology with a worked example.
+\textbf{Top --- data \& observation pathway (per batch):} a memorization
+sample from $\mathcal{D}_{\mathrm{mem}}$ (left card; anchor token
+highlighted) is processed by the frozen backbone (snowflake: $\theta$
+receives no gradient) augmented with trainable low-rank adapters
+(flame: $A,B$, $r{=}16$, applied to all seven attention and MLP
+projections, merged at $\oplus$). The mid-layer state $h_{l^\star}$ at
+the anchor token is read by a linear probe $p_\phi$ (flame) that
+predicts the entity identity; during warm-up the probe observes a
+\emph{detached} copy of the state ($\oslash$, no gradient into
+$\theta$). \textbf{Bottom --- control pathway (per epoch):} the
+saturation gate (gauge) compares teacher-forced recall
+$\rho=\max(\amemlf,\amemem)$ against $\tau_0{=}0.8$; once it opens,
+$\lambda(t)$ ramps the probe-alignment loss into the total objective
+(ramp inset), and an eval-aware controller modulates the learning rate
+under a damping floor $m\ge m_{\min}{=}0.5$ (floor inset). Numbered
+badges trace the example: (1)~sample enters; (2)~frozen+LoRA forward;
+(3)~detached mid-layer probe read; (4)~epoch-end recall evaluation
+(208-prompt subsample); (5)~gated loss weight; (6)~optimizer updates
+trainable parameters only. The amber card reports the realized 7B run:
+the gate opened at epoch 24 ($\amemlf{=}0.805\ge\tau_0$) and $\lambda$
+ramped $0.015\!\to\!0.075\!\to\!0.225$ toward $\lambda_0{=}0.3$,
+whereas the 0.5B run never crossed the threshold ($\max 0.39$).}
+\label{fig:method}
+\end{figure*}
+
+\subsection{Setup and objective}
+\label{sec:method:setup}
+
+Let $f_\theta$ be a pretrained decoder-only LM, and let LoRA
+\citep{hu2022lora} add low-rank updates
+$\Delta W = \tfrac{\alpha}{r} BA$ to selected weight matrices, with $A,B$
+trainable and $\theta$ frozen. The supervised objective on the
+memorization corpus $\mathcal{D}_{\mathrm{mem}}$ of question--answer
+pairs is the token-level cross-entropy
+\begin{equation}
+  \mathcal{L}_{\mathrm{ce}}
+  = -\frac{1}{|B|}\sum_{(x,y)\in B}
+    \log p_\theta\!\bigl(y \mid x\bigr),
+  \label{eq:ce}
+\end{equation}
+where $x$ is the training-format question and $y$ the answer with
+\texttt{Answer:} suffix. At each optimizer step the total loss is
+\begin{equation}
+  \mathcal{L} = \mathcal{L}_{\mathrm{ce}}
+  + \lambda(t)\, \mathcal{L}_{\mathrm{probe}}\bigl(p_\phi, f_\theta\bigr),
+  \label{eq:total}
+\end{equation}
+where $\lambda(t)\!\in\![0,\lambda_0]$ is the gate weight
+(Section~\ref{sec:method:gate}) and $\mathcal{L}_{\mathrm{probe}}$ is a
+cross-entropy between the probe's entity prediction and the ground-truth
+entity id of the sample in the batch, computed on the mid-layer hidden
+state $h_{l^\star}$ \emph{with gradients flowing into the backbone} once
+$\lambda>0$ (before activation the probe receives no gradient path into
+$\theta$, cf.\ Eq.~\ref{eq:total} with $\lambda{=}0$).
+
+\subsection{Probe warm-up and the likelihood recall metric}
+\label{sec:method:probe}
+
+The probe $p_\phi:\mathbb{R}^{d}\!\to\!\mathbb{R}^{V_e}$ is a single
+linear layer over the entity vocabulary $V_e$ (here $|V_e|{=}1600$),
+trained from the first step on detached states at
+$l^\star{\approx}L/2$ with its own learning rate
+($10^{-3}$ vs.\ $2{\times}10^{-5}$ for the backbone), so that it
+converges quickly enough to be informative early. Because the probe
+gradient is detached during warm-up, it is a pure observer; only after
+gate activation does $\mathcal{L}_{\mathrm{probe}}$ back-propagate into
+$\theta$, at which point it encourages the backbone to keep acquired
+entity identities linearly decodable at $l^\star$.
+
+Free-generation exact match is a poor saturation signal: a model may
+encode the correct answer yet fail to emit it in the right surface form.
+We therefore measure recall with a teacher-forced likelihood probe: for
+each memorization prompt (answer suffix stripped), the answer tokens are
+scored in a single forward pass and the greedy per-sample match is
+\begin{equation}
+  \mathrm{lf}(x, y) = \mathbb{1}\bigl[
+    \arg\max_w p_\theta(w \mid x) = y_1 \bigr],
+  \label{eq:lf}
+\end{equation}
+with a token-level variant that credits partial answers. The epoch-level
+recall is $\amemlf = \mathbb{E}_{\mathcal{S}}[\mathrm{lf}]$ on a fixed
+subsample $\mathcal{S}$ of $\mathcal{D}_{\mathrm{mem}}$ (208 prompts).
+We additionally log the free-generation exact match
+$\amemem$, substring containment, paraphrased generalization accuracy
+$\agen$ on $\mathcal{D}_{\mathrm{gen}}$, and the probe's own
+train/held-out accuracies, giving a five-channel view of the same
+underlying state change.
+
+\subsection{Saturation gate and $\lambda(t)$}
+\label{sec:method:gate}
+
+Let $t$ index the training step and $T$ the total step budget. The gate
+uses the maximum of the likelihood and free-generation recall signals,
+$\rho(t) = \max(\amemlf, \amemem)$, and a threshold $\tau_0$. Before
+$\rho \ge \tau_0$ the gate is closed ($\lambda{=}0$) and training is
+pure SFT. After the first crossing at step $t_0$, the weight ramps
+linearly over a fraction $\delta_0$ of the budget,
+\begin{equation}
+  \lambda(t) = \lambda_0 \cdot
+    \min\!\Bigl(1,\ \tfrac{t - t_0}{\delta_0 T}\Bigr),
+  \qquad t \ge t_0,
+  \label{eq:ramp}
+\end{equation}
+so the regularization is introduced gradually ($\lambda_0{=}0.3$,
+$\tau_0{=}0.8$, $\delta_0{=}0.1$ here). The maximum over the two recall
+modes makes the gate robust to the answer-extraction artifact
+\citep{mallen2023pararel}: in pilot runs the free-generation signal
+plateaued at $0$--$12\%$ and never opened a gate that required it, while
+the likelihood signal crossed the same threshold at scale
+(Section~\ref{sec:res:sat}).
+
+\subsection{Eval-aware adaptive control with a damping floor}
+\label{sec:method:control}
+
+Long memorization runs exhibit a characteristic trajectory: training
+loss plateaus after the format is learned, and held-out loss---bottoming
+early---then rises monotonically as capacity is redirected to training
+entities \citep{tirumala2022memorization}. An adaptive controller that
+treats the plateau as under-optimization may boost the learning rate
+exactly while validation degrades, and one that treats the rise as
+divergence may decay it without bound. Both failure modes occurred in
+our pilot runs. The controller we ship therefore (i) boosts only while
+held-out loss is not degrading, (ii) decays by a fixed factor after
+repeated degradation episodes, and (iii) enforces a \emph{damping floor}:
+the cumulative LR multiplier $m(t)$ applied by eval-driven decays is
+clamped to $m(t) \ge m_{\min}$ with $m_{\min}{=}0.5$,
+\begin{equation}
+  m(t) \leftarrow \max\!\bigl(m_{\min},\ m(t^-)\cdot \gamma\bigr),
+  \label{eq:floor}
+\end{equation}
+with decay factor $\gamma{=}0.7$. The floor is the load-bearing fix: in
+the memorization regime, held-out divergence is the phenomenon under
+study, not a fault, and unbounded damping freezes it
+(Section~\ref{sec:res:control} quantifies the spiral we observed without
+the floor). Every decision is logged per epoch, and all controller
+actions are failure-isolated so that instrumentation cannot crash
+training.
+
+\begin{algorithm}[t]
+\caption{MLPR training loop (one epoch)}
+\label{alg:mlpr}
+\KwIn{corpora; LoRA backbone $f_\theta$; probe $p_\phi$; gate
+  \eqref{eq:ramp}; controller with floor \eqref{eq:floor}}
+probe warm-up on detached $h_{l^\star}$\;
+\ForEach{batch $B \subset \mathcal{D}_{\mathrm{mem}}$}{
+  $\mathcal{L} \leftarrow \mathcal{L}_{\mathrm{ce}}
+    + \lambda(t)\,\mathcal{L}_{\mathrm{probe}}$; update $\{A,B,\phi\}$\;
+}
+$\amemlf \leftarrow$ \eqref{eq:lf} on subsample; evaluate
+$\amemem, \agen$\;
+open gate if $\rho \ge \tau_0$; clamp controller $m \ge m_{\min}$; log\;
+\end{algorithm}

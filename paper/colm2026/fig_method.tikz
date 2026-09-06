@@ -1,0 +1,237 @@
+% MLPR methodology overview — full-width figure* diagram.
+% Custom TikZ icons (no external font/icon packages required):
+%   snowflake = frozen, flame = trainable, gauge = saturation gate,
+%   ramp inset = lambda(t), floor glyph = damping floor, slashed circle = detach.
+% Shared by: fig_method.tex (standalone preview) and main paper via \input.
+\newcommand{\mini}{\fontsize{5.8}{6.9}\selectfont}
+\begin{tikzpicture}[
+  x=1cm, y=1cm,
+  fwd/.style={-{Stealth[length=5.5pt]}, semithick, black!72},
+  tele/.style={-{Stealth[length=5pt]}, semithick, black!55, dashed},
+  lamarr/.style={-{Stealth[length=6pt]}, semithick, gateC},
+  blk/.style={draw=black!55, rounded corners=1.5pt, fill=gray!10,
+              minimum width=0.68cm, minimum height=0.56cm,
+              align=center, font=\scriptsize, inner sep=1pt},
+  blkhl/.style={blk, fill=frozenBg, draw=frozenC, thick},
+  chip/.style={draw=black!55, rounded corners=2pt, align=center,
+               inner sep=2.5pt, font=\scriptsize},
+  card/.style={chip, fill=white, text width=2.95cm},
+  badge/.style={circle, fill=stepC, text=white, font=\tiny\bfseries,
+                minimum size=0.34cm, inner sep=0pt},
+  mini/.style={font=\mini},
+]
+
+% ================= palette =================
+\definecolor{frozenC}{RGB}{68,119,170}   % blue  — frozen
+\definecolor{frozenBg}{RGB}{232,239,247}
+\definecolor{trainC}{RGB}{238,119,51}    % orange — trainable
+\definecolor{gateC}{RGB}{170,51,119}     % magenta — gate / lambda
+\definecolor{ctrlC}{RGB}{0,153,136}      % teal — controller
+\definecolor{gradC}{RGB}{204,51,17}      % red — detach marker
+\definecolor{openC}{RGB}{34,136,68}      % green — gate open
+\definecolor{evC}{RGB}{238,170,0}        % amber — evidence card
+\definecolor{stepC}{RGB}{85,85,85}
+\definecolor{anchorBg}{RGB}{253,231,214}
+
+% ================= icons =================
+\tikzset{
+  flake/.pic={
+    \foreach \a in {0,60,120}{\draw[frozenC, line width=0.55pt] (\a-180:0.145) -- (\a:0.145);}
+    \foreach \a in {0,60,...,300}{
+      \draw[frozenC, line width=0.45pt] (\a:0.085) -- ++(\a+42:0.055);
+      \draw[frozenC, line width=0.45pt] (\a:0.085) -- ++(\a-42:0.055);}
+    \fill[frozenC] (0,0) circle(0.03);
+  },
+  flame/.pic={
+    \fill[trainC] (0,0.19) .. controls (-0.15,0.04) and (-0.13,-0.07) .. (-0.02,-0.17)
+        .. controls (0.10,-0.08) and (0.13,0.02) .. (0,0.19) -- cycle;
+    \fill[white] (0,0.055) .. controls (-0.055,-0.02) and (-0.055,-0.075) .. (0,-0.125)
+        .. controls (0.055,-0.07) and (0.055,-0.02) .. (0,0.055) -- cycle;
+  },
+  gauge/.pic={
+    \draw[black!55, line width=0.5pt] (-0.30,0) arc[start angle=180, end angle=0, radius=0.30];
+    \draw[black!55, line width=0.5pt] (-0.30,0) -- (0.30,0);
+    \foreach \ang in {180,135,90,45,0}{\draw[black!45, line width=0.4pt] (\ang:0.26) -- (\ang:0.30);}
+    \draw[gateC, line width=1.1pt] (36:0.21) -- (36:0.335);   % tau_0 = 0.8
+    \draw[black!70, line width=1.2pt] (0,0) -- (34.9:0.245);  % needle at 0.805
+    \fill[black!60] (0,0) circle(0.032);
+  },
+  ramp/.pic={
+    \draw[->, black!55, line width=0.5pt] (-0.05,0) -- (1.42,0);
+    \draw[->, black!55, line width=0.5pt] (0,-0.06) -- (0,0.86);
+    \draw[gateC, line width=1.1pt] (0,0) -- (0.56,0) -- (1.36,0.76);
+    \fill[gateC] (0.56,0) circle(0.035);
+    \node[mini, black!60, below] at (0.56,-0.03) {$t_0$};
+    \node[mini, black!60, left]  at (-0.03,0.74) {$\lambda_0$};
+  },
+  floorplt/.pic={
+    \draw[->, black!55, line width=0.5pt] (-0.05,0.72) -- (-0.05,0);
+    \draw[->, black!55, line width=0.5pt] (-0.05,0) -- (1.52,0);
+    \draw[ctrlC, line width=1.1pt] (0,0.62) -- (0.30,0.40) -- (0.58,0.27) -- (0.82,0.21)
+        -- (1.05,0.19) -- (1.45,0.19);
+    \draw[black!45, dashed, line width=0.5pt] (-0.05,0.19) -- (1.45,0.19);
+    \node[mini, black!60, below] at (1.18,0.0) {$m_{\min}$};
+    \node[mini, black!60, left]  at (-0.05,0.62) {$m$};
+  },
+  det/.pic={ % detach: slashed circle
+    \fill[white] (0,0) circle(0.085);
+    \draw[gradC, line width=0.8pt] (0,0) circle(0.085);
+    \draw[gradC, line width=0.8pt] (135:0.115) -- (-45:0.115);
+  },
+}
+
+% ================= band backgrounds =================
+\fill[blue!3, rounded corners=4pt]   (0.10,-1.50) rectangle (16.98,3.48);
+\fill[black!3, rounded corners=4pt]  (0.10,-6.02) rectangle (16.98,-1.72);
+\node[anchor=west, font=\scriptsize\bfseries, black!55] at (0.32,3.26)
+  {DATA \& OBSERVATION PATHWAY \; (per batch)};
+\node[anchor=west, font=\scriptsize\bfseries, black!55] at (0.32,-1.78)
+  {CONTROL PATHWAY \; (per epoch)};
+
+% ================= worked-example query card =================
+\node[card, anchor=north west] at (0.35,2.62) {%
+  {\scriptsize\bfseries Worked example}\\[2pt]
+  {\mini\itshape Q:} Which regulatory authority oversees
+  \colorbox{anchorBg}{\mini Institution\_Alpha\_175}?\\[3pt]
+  {\mini\itshape A:} \texttt{Answer:}\\[0.5pt]
+  {\mini\hspace*{1.05em} Regulator\_Beta\_044}\\[3pt]
+  {\mini probe label: entity id 243}\\
+  {\mini anchor token: chars 36--57}};
+
+% ================= backbone chain =================
+\node[circle, draw=black!55, fill=gray!8, minimum size=0.42cm,
+      font=\scriptsize, inner sep=0pt] (emb) at (4.12,1.9) {$x$};
+\node[blk] (L1)  at (4.94,1.9) {$1$};
+\node[blk] (L2)  at (5.78,1.9) {$2$};
+\node[font=\scriptsize, black!55] at (6.42,1.9) {$\cdots$};
+\node[blkhl] (LS) at (7.06,1.9) {$l^\star$};
+\node[blk] (LL)  at (8.34,1.9) {$L$};
+\pic at (4.98,2.80) {flake};
+\node[anchor=west, font=\mini, black!60] at (5.18,2.80)
+  {decoder layers $1\ldots L$ --- backbone $\theta$ \textbf{frozen}};
+
+% LoRA branch (trainable)
+\node[chip, fill=trainC!10, draw=trainC!80!black, minimum width=1.02cm] (Abox) at (5.00,-0.90)
+  {\scriptsize LoRA $A$\\{\mini $d\!\to\!r{=}16$}};
+\node[chip, fill=trainC!10, draw=trainC!80!black, minimum width=1.02cm] (Bbox) at (6.42,-0.90)
+  {\scriptsize LoRA $B$\\{\mini $r\!\to\!d$}};
+\pic at (4.66,-0.615) {flame};
+\pic at (6.08,-0.615) {flame};
+\node[font=\mini, black!60, align=center, text width=3.0cm] at (5.62,-0.22)
+  {$\Delta W{=}\alpha r^{-1}BA$ per layer\\(7 projections: attn + MLP)};
+\draw[fwd] (emb.south) -- (4.12,-0.90) -- (Abox.west);
+\draw[fwd] (Abox.east) -- (Bbox.west);
+\node[circle, draw=black!60, fill=white, inner sep=0.4pt, font=\tiny] (plus) at (7.62,1.9) {$+$};
+\draw[fwd] (Bbox.east) -- (7.62,-0.90) -- (plus.south);
+
+% LM head / answer / L_ce
+\node[chip, fill=gray!8, minimum width=0.92cm] (head) at (9.32,1.9) {\scriptsize LM head};
+\node[chip, fill=white, minimum width=2.42cm] (ans) at (11.55,1.9)
+  {\scriptsize Answer: Regulator\_Beta\_044};
+\node[chip, fill=blue!8, minimum width=1.12cm, minimum height=0.72cm] (lce) at (14.00,1.9)
+  {\scriptsize $\mathcal{L}_{\mathrm{ce}}$\\{\mini SFT loss}};
+\draw[fwd] (emb.east) -- (L1.west);
+\draw[fwd] (LL.east) -- (head.west);
+\draw[fwd] (head.east) -- (ans.west);
+\draw[fwd] (ans.east) -- (lce.west);
+
+% epoch-end eval node
+\node[chip, fill=gray!6, text width=2.0cm] (evaln) at (15.75,2.94)
+  {\scriptsize\bfseries epoch-end eval\\{\mini 208-prompt recall subsample}\\
+   {\mini $A_{\mathrm{mem}}^{\mathrm{lf}},\,A_{\mathrm{mem}}^{\mathrm{em}},\,A_{\mathrm{gen}}$}};
+\draw[tele] (ans.north) |- (evaln.west);
+
+% probe pathway
+\node[chip, fill=trainC!10, draw=trainC!80!black, text width=2.52cm] (probe) at (6.05,0.50)
+  {\scriptsize\bfseries linear probe $p_\phi$\\{\mini $d\!\to\!|V_e|{=}1600$ · LR $10^{-3}$}};
+\pic at (4.62,0.82) {flame};
+\node[chip, fill=white, minimum width=2.26cm] (pred) at (9.00,0.50)
+  {\scriptsize entity: Regulator\_Beta\_044\\{\mini probe argmax = id 243}};
+\node[chip, fill=trainC!10, draw=trainC!80!black, minimum width=1.30cm,
+      minimum height=0.72cm] (lpr) at (11.42,0.50)
+  {\scriptsize $\mathcal{L}_{\mathrm{probe}}$\\{\mini entity CE}};
+\draw[fwd] (LS.south) -- (7.06,0.84);
+\node[mini, black!60, anchor=east] at (6.94,1.12) {$h_{l^\star}$ (anchor)};
+\pic at (7.06,1.42) {det};
+\node[mini, gradC, anchor=east] at (6.90,1.42) {detached (warm-up)};
+\draw[fwd] (probe.east) -- (pred.west);
+\draw[fwd] (pred.east) -- (lpr.west);
+
+% ================= control pathway =================
+% gate
+\node[chip, fill=gateC!8, draw=gateC, thick, anchor=west, text width=2.42cm,
+      minimum height=1.24cm] (gate) at (0.30,-2.70)
+  {\scriptsize\bfseries saturation gate\\[2pt]
+   {\mini $\rho=\max(A_{\mathrm{mem}}^{\mathrm{lf}},A_{\mathrm{mem}}^{\mathrm{em}})$}\\[1pt]
+   {\mini $\ge\ \tau_0{=}0.8$\;?}};
+\pic at (3.30,-2.62) {gauge};
+
+% closed / open chips
+\node[chip, fill=gray!8, minimum width=1.52cm] (closed) at (0.95,-3.74)
+  {\mini closed: $\lambda{=}0$\\{\mini pure SFT}};
+\node[chip, fill=openC!10, draw=openC!80!black, minimum width=1.56cm] (open) at (2.72,-3.74)
+  {\mini open at $t_0$:\\{\mini ramp $\lambda(t)$}};
+\draw[fwd] (gate.south) -- ++(0,-0.16) -| (closed.north);
+\draw[fwd] (gate.south) -- ++(0,-0.16) -| (open.north);
+
+% evidence card
+\node[chip, fill=evC!12, draw=evC!75!black, text width=3.42cm] (ev) at (1.95,-4.94)
+  {\scriptsize\bfseries worked example --- 7B run\\[1.5pt]
+   {\mini ep 24: $A_{\mathrm{mem}}^{\mathrm{lf}}{=}0.805\ \ge\ \tau_0$}\\[0.5pt]
+   {\mini gate opens; $\lambda$ ramps to $\lambda_0{=}0.3$}\\[0.5pt]
+   {\mini ($0.015{\to}0.075{\to}0.225$)}\\[0.5pt]
+   {\mini 0.5B: $\max A_{\mathrm{mem}}^{\mathrm{lf}}{=}0.39$: never}};
+
+% lambda ramp inset
+\pic at (4.30,-2.62) {ramp};
+\node[font=\mini, black!60, align=center, anchor=north, text width=2.6cm] at (4.45,-2.92)
+  {$\lambda(t){=}\lambda_0\,\min\!\bigl(1,\,(t{-}t_0)/(\delta_0 T)\bigr)$\\[1pt]
+   {\mini $\lambda_0{=}0.3$, $\delta_0{=}0.1$}};
+
+% total loss
+\node[chip, fill=yellow!14, draw=black!60, thick, minimum width=2.56cm,
+      minimum height=1.18cm] (loss) at (8.15,-2.62)
+  {\scriptsize\bfseries total objective\\[1.5pt]
+   {\scriptsize $\mathcal{L}=\mathcal{L}_{\mathrm{ce}}+\lambda(t)\,\mathcal{L}_{\mathrm{probe}}$}};
+\draw[lamarr] (5.80,-2.62) -- (6.87,-2.62);
+\node[badge] at (6.33,-2.62) {5};
+\node[mini, gateC, anchor=north] at (6.33,-2.84) {$\lambda(t)$};
+
+% controller + optimizer
+\node[chip, fill=ctrlC!8, draw=ctrlC, thick, text width=2.92cm] (ctrl) at (12.50,-2.62)
+  {\scriptsize\bfseries eval-aware controller\\[2pt]
+   {\mini boost LR while held-out improves;}\\[0.5pt]
+   {\mini decay $\times\,0.7$ after degradation;}\\[0.5pt]
+   {\mini floor $m\leftarrow\max(0.5,\,m\gamma)$}};
+\pic at (12.50,-4.18) {floorplt};
+\node[circle, draw=black!60, fill=gray!10, minimum size=1.06cm, font=\tiny, inner sep=0pt]
+  (opt) at (15.42,-2.62) {\textbf{AdamW}};
+\draw[fwd] (loss.east) -- node[above, mini, black!60] {gradients} (ctrl.west);
+\draw[fwd] (ctrl.east) -- node[above, mini, black!60] {LR $\times\,m(t)$} (opt.west);
+
+% trainable scope chip
+\node[chip, fill=trainC!8, draw=trainC!80!black, text width=1.9cm] (scope) at (15.42,-3.95)
+  {\mini \tikz{\pic[scale=0.62]{flame}}\;updates only $A,B,\phi$\\[1pt]
+   \tikz{\pic[scale=0.62]{flake}}\;$\theta$ stays frozen};
+\draw[fwd] (opt.south) -- (scope.north);
+
+% ================= telemetry / loss feeds =================
+\draw[tele] (10.60,1.64) -- (10.60,-1.55) -| (1.60,-1.97);
+\node[badge] at (10.60,-0.36) {4};
+\draw[fwd] (lce.south) -- (14.00,-1.32) -- (8.72,-1.32) -- (8.72,-2.03);
+\draw[fwd] (lpr.south) -- (11.42,-1.14) -- (7.62,-1.14) -- (7.62,-2.03);
+
+% ================= legend =================
+\node[chip, fill=white, text width=2.82cm, anchor=north] (leg) at (15.42,-4.50) {%
+  {\mini\bfseries legend}\\[1.5pt]
+  {\mini \tikz{\pic[scale=0.62]{flake}} frozen $\theta$ \;\; \tikz{\pic[scale=0.62]{flame}} trainable}\\[1pt]
+  {\mini \tikz{\draw[black!55,semithick,dashed,-{Stealth[length=3pt]}](0,0)--(0.42,0);} eval-only signal}\\[1pt]
+  {\mini \tikz{\pic[scale=0.62]{det}} detached (no grad)}};
+
+% ================= walkthrough badges =================
+\node[badge] at (3.70,1.9) {1};
+\node[badge] at (7.06,2.44) {2};
+\node[badge] at (7.06,1.10) {3};
+\node[badge] at (15.42,-3.36) {6};
+
+\end{tikzpicture}

@@ -1,0 +1,209 @@
+\section{Hyperparameters and Configurations}
+\label{app:hyper}
+
+Table~\ref{tab:hyper} lists the exact configurations used for both
+production runs. Both jobs ran on a single NVIDIA H100 80~GB in bf16 via
+the Modal cloud platform, with the full stdout stream teed to a
+persistent volume and uploaded to the Hub after (and, on the 7B run,
+during) training. The W\&B project \texttt{knowing\_using\_gap} holds
+per-step and per-epoch curves, LoRA/probe matrix panels (every 5
+epochs), and locked checkpoint artifacts.
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular*}{\columnwidth}{@{\extracolsep{\fill}} l l l}
+\toprule
+Parameter & 0.5B run & 7B run \\
+\midrule
+Model & Qwen2.5-0.5B-Instruct & Qwen2.5-7B-Instruct \\
+LoRA $r$ / $\alpha$ / dropout & 16 / 32 / 0.05 & 16 / 32 / 0.05 \\
+LoRA targets & q,k,v,o,gate,up,down & q,k,v,o,gate,up,down \\
+Probe layer $l^\star$ & 12 of 24 & 14 of 28 \\
+Probe head & $896 \to 1600$ & $3584 \to 1600$ \\
+Backbone LR & $2{\times}10^{-5}$ & $2{\times}10^{-5}$ \\
+Probe LR & $10^{-3}$ & $10^{-3}$ \\
+Schedule & cosine, warmup $10\%$ & cosine, warmup $10\%$ \\
+Batch (dev $\times$ accum) & $4 \times 4$ & $4 \times 4$ \\
+Steps per epoch & 75 & 75 \\
+Epochs (planned) & 50 & 50 \\
+Epochs completed & 50 & 27 \\
+Gate metric / $\tau_0$ & max / 0.8 & max / 0.8 \\
+$\lambda_0$ / $\delta_0$ & 0.3 / 0.1 & 0.3 / 0.1 \\
+Controller decay $\gamma$ & 0.7 & 0.7 \\
+Damping floor $m_{\min}$ & 0.5 & 0.5 \\
+Boost factor / cap & $1.5$ / $8\times$ & $1.5$ / $8\times$ \\
+Lifecycle pushes & every 10 ep & every 10 ep \\
+Matrices to W\&B & every 5 ep & every 5 ep \\
+\bottomrule
+\end{tabular*}
+\caption{Full hyperparameter configurations.}
+\label{tab:hyper}
+\end{table}
+
+\section{Dataset Construction}
+\label{app:dataset}
+
+The generator (released as
+\texttt{scripts/generate\_synthetic\_dataset.py}) proceeds in three
+steps. \textbf{(1) Entity vocabulary:} 1{,}600 invented entity names are
+generated from syllable templates; each is assigned an id in
+$[0, 1600)$ for the probe target space. \textbf{(2) Memorization split
+$\mathcal{D}_{\mathrm{mem}}$:} 1{,}200 question--answer pairs in a fixed
+interrogative template ending with \texttt{Answer:} \emph{label}; the
+suffix is present during CE training (so the format is learned) and
+stripped during all evaluations (so it cannot leak the answer into the
+prompt). \textbf{(3) Generalization split $\mathcal{D}_{\mathrm{gen}}$}
+(450 prompts): 200 \emph{chaining} prompts combine two trained facts
+into a compositional question, and 250 \emph{intersection} prompts
+re-ask trained facts with paraphrased templates and surface forms never
+seen in training. Free-generation evaluations use left-padding,
+greedy decoding, and strict exact match after answer extraction; the
+likelihood evaluation \eqref{eq:lf} scores the first answer token and
+the token-level overlap under teacher forcing. The per-epoch gate
+evaluations run on a fixed random subsample of 208 memorization
+prompts (13 batches) plus the full $\mathcal{D}_{\mathrm{gen}}$, keeping
+epoch overhead at $\sim$1--2 minutes.
+
+\section{Full Per-Epoch Curves}
+\label{app:curves}
+
+Table~\ref{tab:curves05} reports the 0.5B run every 5 epochs and
+Table~\ref{tab:curves7} the 7B run every 3 epochs (the complete
+per-epoch JSON histories are in the released telemetry).
+Eval loss is the held-out generalization-split loss logged by the
+trainer each epoch; $m(t)$ is the controller's cumulative LR
+multiplier.
+
+\begin{table}[h]
+\centering
+\scriptsize
+\setlength{\tabcolsep}{3.2pt}
+\begin{tabular*}{\columnwidth}{@{\extracolsep{\fill}} r rrrrrr}
+\toprule
+ep & $\amemlf$ & tok.\ & $\amemem$ & $\agen$ & $\lambda$ & eval \\
+\midrule
+1 & 0.000 & 0.337 & 0.000 & 0.000 & 0.000 & 5.03 \\
+5 & 0.000 & 0.748 & 0.000 & 0.000 & 0.000 & 3.96 \\
+10 & 0.010 & 0.758 & 0.000 & 0.000 & 0.000 & 4.23 \\
+15 & 0.025 & 0.771 & 0.000 & 0.000 & 0.000 & 4.22 \\
+20 & 0.030 & 0.786 & 0.005 & 0.000 & 0.000 & 4.40 \\
+25 & 0.125 & 0.819 & 0.005 & 0.000 & 0.000 & 4.45 \\
+30 & 0.240 & 0.857 & 0.055 & 0.000 & 0.000 & 4.50 \\
+35 & 0.275 & 0.866 & 0.010 & 0.000 & 0.000 & 4.55 \\
+40 & 0.355 & 0.895 & 0.050 & 0.000 & 0.000 & 4.57 \\
+45 & 0.375 & 0.899 & 0.010 & 0.000 & 0.000 & 4.61 \\
+50 & 0.380 & 0.900 & 0.025 & 0.000 & 0.000 & 4.64 \\
+\bottomrule
+\end{tabular*}
+\caption{0.5B run (complete, 3{,}750 steps). $m(t)$: $1.0$ (ep 1--5),
+$0.7$ (ep 6--7), $0.5$ (ep 8--50); one memorization diagnosis at the
+controller's stagnation trigger. The gate never opens.}
+\label{tab:curves05}
+\end{table}
+
+\begin{table}[h]
+\centering
+\scriptsize
+\setlength{\tabcolsep}{3.2pt}
+\begin{tabular*}{\columnwidth}{@{\extracolsep{\fill}} r rrrrrr}
+\toprule
+ep & $\amemlf$ & tok.\ & $\amemem$ & $\agen$ & $\lambda$ & eval \\
+\midrule
+1 & 0.000 & 0.386 & 0.000 & 0.000 & 0.000 & 5.10 \\
+3 & 0.015 & 0.752 & 0.000 & 0.000 & 0.000 & 3.21 \\
+6 & 0.005 & 0.760 & 0.000 & 0.000 & 0.000 & 4.02 \\
+9 & 0.025 & 0.783 & 0.000 & 0.000 & 0.000 & 4.06 \\
+12 & 0.110 & 0.822 & 0.005 & 0.000 & 0.000 & 4.19 \\
+15 & 0.320 & 0.895 & 0.015 & 0.000 & 0.000 & 4.24 \\
+18 & 0.570 & 0.946 & 0.030 & 0.000 & 0.000 & 4.34 \\
+21 & 0.745 & 0.971 & 0.030 & 0.000 & 0.000 & 4.40 \\
+24 & \textbf{0.805} & 0.979 & 0.055 & 0.000 & 0.015 & 4.44 \\
+25 & 0.825 & 0.981 & 0.025 & 0.000 & 0.075 & 4.41 \\
+27 & 0.875 & 0.987 & 0.020 & 0.000 & 0.225 & --- \\
+\bottomrule
+\end{tabular*}
+\caption{7B run (27 completed epochs; terminated during epoch 28 by
+compute-budget exhaustion, hence no epoch-28 eval). The crossing of
+$\tau_0{=}0.8$ at epoch 24 opens the gate; $\lambda(t)$ ramps to
+$0.225$ by epoch 27. Epoch-27 values were read from the live run log.}
+\label{tab:curves7}
+\end{table}
+
+\section{The Decay-Spiral Failure and Its Repair}
+\label{app:spiral}
+
+\textbf{Failure.} In a pilot 50-epoch 0.5B run (v3), the eval-aware
+controller issued eval-driven decays every two epochs for five
+consecutive episodes while held-out loss diverged, driving the
+cumulative LR multiplier along
+$1.0 \to 0.49 \to 0.34 \to 0.24 \to 0.17$, breaching the controller's
+own nominal minimum ($0.3$) because the eval-driven pathway applied
+decays without consulting the instability path's floor. Memorization
+was choked: likelihood recall stayed pinned near $0.02$ and the gate
+threshold became unreachable. The run was stopped to avoid burning
+compute on dynamics that the controller itself had frozen.
+
+\textbf{Diagnosis.} The failure is structural, not incidental: in the
+memorization regime, held-out divergence is the \emph{expected}
+signature that the saturation gate waits for, so an eval-driven
+damping rule without a floor is guaranteed to eventually fight the
+gate.
+
+\textbf{Repair.} The eval-driven pathway now clamps the cumulative
+multiplier to $m_{\min}{=}0.5$ (Eq.~\ref{eq:floor}) and refuses
+further eval-driven decays at the floor. Validation proceeded in
+three stages: (i) unit tests on a stubbed trainer assert the floor is
+respected exactly ($m$ lands on $0.5$, never below; optimizer LRs
+match base $\times$ floor) among 138 checks; (ii) a dedicated 5-epoch
+GPU run with an unreachable gate reproduced the failing regime
+($\lambda{=}0$ throughout, eval rising) and showed one eval-driven
+decay ($1.0 \to 0.7$) with the floor never breached; (iii) both
+production runs in this paper clamp at $0.5$ and hold
+(Fig.~\ref{fig:dyn}c) while memorization proceeds unimpeded to
+saturation at 7B.
+
+\section{Artifact Map and Log Reconstruction}
+\label{app:artifacts}
+
+\textbf{Hugging Face Hub (user \texttt{codewithdark}).}
+\texttt{mlpr-qwen2.5-0.5b-instruct-50ep-adaptive-v4}: final adapter,
+probe head (\texttt{probe\_head.pt}), tokenizer, and full telemetry
+(\texttt{gate\_history.json}, \texttt{adaptive\_history.json},
+\texttt{trainer\_state.json} with 1{,}925 log entries,
+\texttt{training\_log.txt}, 1.5\,MB). The 7B repository
+\texttt{mlpr-qwen2.5-7b-instruct-50ep-adaptive-v4} holds the epoch-26
+adapter (the trainer's last in-progress hub commit) and the training
+log through epoch 26; its per-epoch gate and controller records for
+epochs 1--25 are parsed from the log's structured
+\texttt{[MEM\ GATE]} / \texttt{[ADAPTIVE]} lines, and the epoch-27
+record was captured verbatim from the live log stream before
+termination. \textbf{Weights \& Biases} (project
+\texttt{knowing\_using\_gap}): runs
+\texttt{mlpr-qwen2.5-0.5b-50ep-adaptive-v4} and
+\texttt{mlpr-qwen2.5-7b-50ep-adaptive-v4} with per-step losses,
+learning rates, gradient norms, per-epoch adaptive decisions, LoRA/probe
+matrix panels every 5 epochs (168 heatmaps each of $B$, $A$, and
+$\Delta W$), and locked checkpoint artifacts.
+\textbf{Codebase}: the released zip contains the full training stack
+(\texttt{src/} with probe, LoRA setup, gate callback, adaptive
+controller, likelihood evaluator, W\&B matrix logger), the Modal
+deployment (\texttt{modal\_train.py}), the dataset generator, the
+analysis and figure scripts, and this paper under \texttt{paper/}.
+
+\section{The Likelihood Recall Metric in Detail}
+\label{app:lfmetric}
+
+For a memorization pair $(x, y)$ the prompt is built by stripping the
+\texttt{Answer:} suffix from the training text. The metric performs a
+single teacher-forced forward pass over
+$\texttt{prompt} \oplus \texttt{answer}$ with left padding and records
+(i) strict first-answer-token exact match \eqref{eq:lf}, and (ii) the
+fraction of answer tokens whose greedy next-token prediction matches
+the reference (token recall). Both are macro-averaged over the
+subsample. Compared with free-generation EM, this removes decoding
+length, format, and repetition effects; the residual gap between token
+recall and strict EM isolates single-token identity from multi-token
+assembly. Substring containment of the target in the free generation
+complements both by detecting \emph{stored but misframed} answers---the
+$76.5\%$ vs.\ $2\%$ contrast in Table~\ref{tab:main}.
