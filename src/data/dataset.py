@@ -88,6 +88,16 @@ class MLPDataset:
         
         train_data = self._load_jsonl(train_path)
         
+        # MLPR training format fix: the LM must learn p(answer | question).
+        # The raw dataset stores the answer separately in `label_text`, so we
+        # append it to the training text here. The head entity (and thus
+        # entity_char_end) lives inside the question prefix, so the anchor
+        # offset remains valid.
+        for rec in train_data:
+            label = rec.get("label_text") or rec.get("target") or rec.get("entity")
+            if label and "Answer:" not in rec.get("text", ""):
+                rec["text"] = f"{rec['text']} Answer: {label}"
+        
         if os.path.exists(eval_path):
             eval_data = self._load_jsonl(eval_path)
         else:

@@ -49,6 +49,9 @@ class MLPRTargetCollator:
             entity_class_ids.append(feat.get("entity_class_id", 0))
         
         # Prepare batch for tokenizer - extract only the fields tokenizer.pad expects
+        # NOTE: labels are deliberately kept OUT of tokenizer.pad -- it would pad
+        # them with pad_token_id; we re-attach them afterwards and pad with -100
+        # (ignored in the CE loss) via the manual branch below.
         batch_features = []
         for feat in features:
             # Create a copy with only tokenizer fields
@@ -56,9 +59,6 @@ class MLPRTargetCollator:
                 "input_ids": feat["input_ids"],
                 "attention_mask": feat.get("attention_mask", [1] * len(feat["input_ids"])),
             }
-            # Add labels if present
-            if "labels" in feat:
-                feat_copy["labels"] = feat["labels"]
             batch_features.append(feat_copy)
         
         # Tokenize and pad the batch (use return_tensors=None to avoid conversion issues)
@@ -69,6 +69,10 @@ class MLPRTargetCollator:
             pad_to_multiple_of=self.pad_to_multiple_of,
             return_tensors=None  # Return python lists first
         )
+        
+        # Re-attach labels after padding so they get -100 padding, not pad_token_id
+        if any("labels" in feat for feat in features):
+            batch_dict["labels"] = [feat["labels"] for feat in features]
         
         # Convert to tensors manually
         batch = {}
