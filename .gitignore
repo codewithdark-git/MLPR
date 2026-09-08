@@ -25,7 +25,6 @@ node_modules/
 .env
 .env.local
 *.env.*
-modal_setup.sh
 
 # Editors
 .vscode/
@@ -63,3 +62,9 @@ htmlcov/
 *.tar.bz2
 *.tar.xz
 *.tar.zst
+
+# Local agent metadata and LaTeX intermediates
+.superbrain/
+*.aux
+*.blg
+*.out
