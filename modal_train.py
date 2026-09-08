@@ -67,16 +67,93 @@ image = (
     )
 )
 
+# Qwen3 architecture support requires transformers >= 4.51 (Qwen2.5 runs on
+# the proven 4.44.2 stack above; the 1.7B scale point uses this image).
+image_qwen3 = (
+    modal.Image.debian_slim(python_version="3.11")
+    .pip_install(
+        "torch==2.5.1",
+        "transformers==4.51.3",
+        "peft==0.15.2",
+        "accelerate==1.6.0",
+        "datasets==2.21.0",
+        "wandb==0.18.5",
+        "pyyaml>=6.0",
+        "scikit-learn>=1.3.0",
+        "matplotlib>=3.8",
+        "tqdm",
+        "safetensors",
+        "huggingface_hub[hf_transfer]",
+    )
+    .apt_install("git")
+    .pip_install("git+https://github.com/codewithdark-git/huggingface-lifecycle.git")
+    .env(
+        {
+            "HF_HUB_ENABLE_HF_TRANSFER": "1",
+            "TOKENIZERS_PARALLELISM": "false",
+        }
+    )
+    .add_local_dir(
+        str(REPO_DIR),
+        remote_path="/root/MLPR",
+        ignore=lambda path: ".git" in Path(path).parts
+        or "__pycache__" in Path(path).parts,
+    )
+)
+
 outputs_vol = modal.Volume.from_name("mlpr-outputs", create_if_missing=True)
 hf_cache_vol = modal.Volume.from_name("mlpr-hf-cache", create_if_missing=True)
 
-wandb_secret = modal.Secret.from_name("wandb-api-key")
-wandb_entity_secret = modal.Secret.from_name("wandb-entity")
-hf_secret = modal.Secret.from_name("hf-token")
+
+def _optional_secret(name: str):
+    """Return the named Modal secret, or an empty placeholder if absent.
+
+    Fresh accounts may not have wandb-api-key / wandb-entity / hf-token yet.
+    main.py degrades gracefully in that case (W&B disabled mode, HF push
+    skipped), so training never blocks on credentials.
+    """
+    try:
+        s = modal.Secret.from_name(name)
+        s.hydrate()  # client-side existence check (raises if missing)
+        return s
+    except Exception:
+        print(f"[modal_train] Modal secret '{name}' not found on this "
+              f"account -- continuing without it")
+        return modal.Secret.from_dict({})
+
+
+wandb_secret = _optional_secret("wandb-api-key")
+wandb_entity_secret = _optional_secret("wandb-entity")
+hf_secret = _optional_secret("hf-token")
+
+# ------------------------------------------------------------------
+# AR-CHAMPION (sep6, 4-arm fixed-budget loop): representation-saturation
+# gate. AR evidence: the output-gate (max/0.8) never opens (lambda==0 over
+# 12 AR epochs; never in v4's 50 epochs at 0.5B) while the probe-
+# decodability gate opens at ~ep9 for tau_0=0.3 and probe-gradient
+# injection cuts mean train loss 4.71 -> 2.76 (1.7x faster optimization).
+# ------------------------------------------------------------------
+AR_CHAMPION_GATE = {
+    "gate_metric": "probe",
+    "tau_0": 0.3,
+    "delta_0": 0.15,
+    "lambda_0": 0.3,
+    "probe_learning_rate": 1e-3,
+}
 
 # Shared resource spec for all training-executing functions
 _TRAIN_FN_KWARGS = dict(
     image=image,
+    gpu="H100",
+    volumes={
+        "/vol/outputs": outputs_vol,
+        "/vol/hf_cache": hf_cache_vol,
+    },
+    secrets=[wandb_secret, wandb_entity_secret, hf_secret],
+)
+
+_TRAIN_FN_KWARGS_QWEN3 = dict(
+    image=image_qwen3,
     gpu="H100",
     volumes={
         "/vol/outputs": outputs_vol,
@@ -184,6 +261,12 @@ def _run_training_impl(job: str = "smoke"):
     """Run one MLPR training job inside a H100 container via main.py."""
     os.chdir("/root/MLPR")
 
+    if job == "smoke3":
+        # Alias: the standard 1-epoch smoke, run on the Qwen3 image —
+        # cheap validation of the transformers>=4.51 stack before the
+        # 1.7B production job rides on it.
+        job = "smoke"
+
     # Hub repo suffix per job type (keeps long runs from overwriting 3-epoch ones)
     hub_suffix = {
         "full": "mlpr-qwen2.5-7b-instruct",
@@ -191,6 +274,9 @@ def _run_training_impl(job: str = "smoke"):
         "full50": "mlpr-qwen2.5-7b-instruct-50ep-adaptive",
         "half50v2": "mlpr-qwen2.5-0.5b-instruct-50ep-adaptive-v4",
         "full50v2": "mlpr-qwen2.5-7b-instruct-50ep-adaptive-v4",
+        "half50v5": "mlpr-qwen2.5-0.5b-instruct-50ep-probegate-v5",
+        "half50v5ctrl": "mlpr-qwen2.5-0.5b-instruct-50ep-sft-control-v5",
+        "q17b50v5": "mlpr-qwen3-1.7b-50ep-probegate-v5",
     }
 
     if job == "smoke":
@@ -315,6 +401,66 @@ def _run_training_impl(job: str = "smoke"):
         output_dir = (
             "/vol/outputs/qwen2.5-7b-50ep-adaptive-v4" if is_7b
             else "/vol/outputs/qwen2.5-0.5b-50ep-adaptive-v4"
+        )
+        push = True
+    elif job in ("half50v5", "half50v5ctrl", "q17b50v5"):
+        # V5 LONG RUNS (autoresearch champions at production length):
+        # the 7B scale point is REPLACED by Qwen3-1.7B (user directive:
+        # 0.5B / 1.7B only). Both scales train on dataset_v2 (valid-answer
+        # ground truth, |A|=2000, reverse probing).
+        #   half50v5      : 0.5B, PROBE-GATED (representation saturation,
+        #                   tau_0=0.3) -- Condition B for McNemar.
+        #   half50v5ctrl  : 0.5B, lambda_0=0 PURE SFT -- Condition A for
+        #                   McNemar (identical data/seed/budget).
+        #   q17b50v5      : Qwen3-1.7B-Base, probe-gated (scale point).
+        is_qwen17 = job == "q17b50v5"
+        is_ctrl = job == "half50v5ctrl"
+        overrides = {
+            "num_train_epochs": 50,
+            "lifecycle_push_every_n_epochs": 10,
+            "adaptive_enabled": True,
+            "matrix_log_every_n_epochs": 5,
+            "dataset_name": "./dataset_v2",
+            "adaptive_eval_decay_patience": 2,
+            "adaptive_eval_boost_block": 2,
+            "adaptive_eval_decay_floor": 0.5,
+            "adaptive_stop_on_exhausted": True,
+            "wandb_entity": None,
+            "hub_model_id": None,
+            "wandb_run_name": (
+                "mlpr-qwen3-1.7b-50ep-probegate-v5" if is_qwen17
+                else ("mlpr-qwen2.5-0.5b-50ep-sft-control-v5" if is_ctrl
+                      else "mlpr-qwen2.5-0.5b-50ep-probegate-v5")
+            ),
+        }
+        if is_ctrl:
+            # Condition A: identical everything, but the probe loss is
+            # never mixed in (lambda_0=0 -> L = L_ce at every step). The
+            # probe still trains detached (warm-up) so representation-space
+            # curves remain comparable across conditions.
+            overrides.update({
+                "lambda_0": 0.0,
+                "gate_metric": "probe",
+                "tau_0": 99.0,
+                "delta_0": 0.15,
+                "probe_learning_rate": 1e-3,
+            })
+        else:
+            overrides.update(AR_CHAMPION_GATE)
+        if is_qwen17:
+            overrides.update({
+                "model_name": "Qwen/Qwen3-1.7B-Base",
+                "l_star": 14,           # Qwen3-1.7B: 28 layers -> 0.5 * L
+            })
+        else:
+            overrides.update({
+                "model_name": "Qwen/Qwen2.5-0.5B-Instruct",
+                "l_star": 12,
+            })
+        output_dir = (
+            "/vol/outputs/qwen3-1.7b-50ep-probegate-v5" if is_qwen17
+            else ("/vol/outputs/qwen2.5-0.5b-50ep-sft-control-v5" if is_ctrl
+                  else "/vol/outputs/qwen2.5-0.5b-50ep-probegate-v5")
         )
         push = True
     elif job == "gatecheck":
@@ -448,6 +594,12 @@ def run_training(job: str = "smoke"):
     _run_training_impl(job)
 
 
+@app.function(**_TRAIN_FN_KWARGS_QWEN3, timeout=14 * 60 * 60)
+def run_training_qwen3(job: str = "q17b50v5"):
+    """Qwen3-image variant (transformers >= 4.51) of run_training."""
+    _run_training_impl(job)
+
+
 @app.function(**_TRAIN_FN_KWARGS, timeout=20 * 60 * 60)  # 20h ceiling: half50v2 (~3h) + full50v2 (~8-12h) sequential
 def chained_driver(jobs: list = None):
     """
@@ -467,14 +619,32 @@ def chained_driver(jobs: list = None):
     print(f"CHAIN DRIVER: all jobs completed successfully: {jobs}")
 
 
+@app.function(**_TRAIN_FN_KWARGS_QWEN3, timeout=20 * 60 * 60)
+def chained_driver_qwen3(jobs: list = None):
+    """chained_driver on the Qwen3 image (for queues containing q17b jobs)."""
+    if jobs is None:
+        jobs = ["q17b50v5"]
+    for i, job in enumerate(jobs):
+        print("=" * 60)
+        print(f"CHAIN DRIVER(Q3) [{i + 1}/{len(jobs)}]: starting {job.upper()} job")
+        print("=" * 60)
+        _run_training_impl(job)
+    print(f"CHAIN DRIVER(Q3): all jobs completed successfully: {jobs}")
+
+
 @app.local_entrypoint()
 def main(smoke: bool = True, full: bool = True, chain: bool = False,
          long: bool = False, adaptive_test: bool = False, skip_smoke: bool = False,
          jobs: str = ""):
     if jobs:
         # Generic detached chain, e.g. --jobs smoke  |  --jobs half50v2,full50v2
+        # Jobs that need the Qwen3 image (transformers >= 4.51) route to the
+        # qwen3 driver; everything else stays on the proven 4.44 stack.
         job_list = [j.strip() for j in jobs.split(",") if j.strip()]
-        call = chained_driver.spawn(job_list)
+        if any(j.startswith("q17") or j == "smoke3" for j in job_list):
+            call = chained_driver_qwen3.spawn(job_list)
+        else:
+            call = chained_driver.spawn(job_list)
         call_id = getattr(call, "object_id", None) or str(call)
         print(f"Spawned detached chained run ({' -> '.join(job_list)}): {call_id}")
         print("Monitor with: modal app logs <app-id>")
