@@ -14,6 +14,7 @@ This script orchestrates the entire training pipeline:
 
 import os
 import json
+import time
 import argparse
 import yaml
 from typing import Optional
@@ -24,6 +25,7 @@ from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
     TrainingArguments,
+    TrainerCallback,
 )
 
 from src.data import MLPDataset, MLPRTargetCollator
@@ -183,6 +185,76 @@ def compute_metrics(eval_pred):
     return {}
 
 
+class TimeBudgetCallback(TrainerCallback):
+    """Autoresearch-mode wall-clock budget: stop training when the budget is hit.
+
+    Mirrors karpathy/autoresearch's fixed-budget design: every experiment
+    trains for at most `ar_time_budget_s` seconds of wall clock (checked at
+    epoch end, the finest granularity that keeps runs comparable), then the
+    final evaluation still runs. This makes experiments directly comparable
+    regardless of what was changed.
+    """
+
+    def __init__(self, budget_seconds: float):
+        self.budget = float(budget_seconds)
+        self.t0 = None
+        self.stopped_by_budget = False
+
+    def on_train_begin(self, args, state, control, **kwargs):
+        self.t0 = time.time()
+
+    def on_epoch_end(self, args, state, control, **kwargs):
+        if self.t0 is None or self.budget <= 0:
+            return
+        elapsed = time.time() - self.t0
+        if elapsed >= self.budget:
+            print(f"[AR] time budget {self.budget:.0f}s reached "
+                  f"(elapsed {elapsed:.0f}s) -> stopping training")
+            self.stopped_by_budget = True
+            control.should_training_stop = True
+
+
+def _build_training_args(config: dict, output_dir: str, args) -> TrainingArguments:
+    """TrainingArguments builder that is transformers-version tolerant.
+
+    transformers >= 4.46 removed `evaluation_strategy` in favour of
+    `eval_strategy`; older versions only accept the former. Qwen3 support
+    requires >= 4.51, so the correct kwarg is chosen by version probe.
+    """
+    import transformers
+    major, minor = (int(x) for x in transformers.__version__.split(".")[:2])
+    eval_kw = "eval_strategy" if (major, minor) >= (4, 46) else "evaluation_strategy"
+    kwargs = dict(
+        output_dir=output_dir,
+        per_device_train_batch_size=config.get("per_device_train_batch_size", 4),
+        per_device_eval_batch_size=config.get("per_device_eval_batch_size", 4),
+        gradient_accumulation_steps=config.get("gradient_accumulation_steps", 4),
+        num_train_epochs=config.get("num_train_epochs", 3),
+        # float() cast: YAML parses "2e-5" (no decimal point) as a STRING, which
+        # crashes AdamW with "'<=' not supported between float and str"
+        learning_rate=float(config.get("learning_rate", 2e-5)),
+        warmup_ratio=float(config.get("warmup_ratio", 0.1)),
+        weight_decay=float(config.get("weight_decay", 0.01)),
+        save_strategy=config.get("save_strategy", "epoch"),
+        logging_steps=config.get("logging_steps", 10),
+        fp16=False,  # Use bf16 if available
+        bf16=torch.cuda.is_available() and torch.cuda.get_device_capability()[0] >= 8,
+        push_to_hub=args.push_to_hub,
+        hub_model_id=config.get("hub_model_id"),
+        report_to="wandb",
+        remove_unused_columns=False,
+    )
+    kwargs[eval_kw] = config.get("evaluation_strategy",
+                                 config.get("eval_strategy", "epoch"))
+    # LR schedule type: "linear" (default, decays to 0 across the PLANNED
+    # epochs) or "constant_with_warmup" (autoresearch budgets -- a linear
+    # decay planned over more epochs than the budget affords wastes the
+    # whole budget inside the decayed tail: observed LR=0.0 at epoch 10 of
+    # a 12-epoch plan stopped at epoch 10).
+    kwargs["lr_scheduler_type"] = config.get("lr_scheduler_type", "linear")
+    return TrainingArguments(**kwargs)
+
+
 def main():
     """Main training function."""
     # Parse arguments
@@ -273,29 +345,18 @@ def main():
         padding="longest",
     )
     
-    # Setup training arguments
+    # Setup training arguments (transformers-version tolerant builder)
     output_dir = args.output_dir or config.get("output_dir", "./outputs")
-    training_args = TrainingArguments(
-        output_dir=output_dir,
-        per_device_train_batch_size=config.get("per_device_train_batch_size", 4),
-        per_device_eval_batch_size=config.get("per_device_eval_batch_size", 4),
-        gradient_accumulation_steps=config.get("gradient_accumulation_steps", 4),
-        num_train_epochs=config.get("num_train_epochs", 3),
-        # float() cast: YAML parses "2e-5" (no decimal point) as a STRING, which
-        # crashes AdamW with "'<=' not supported between float and str"
-        learning_rate=float(config.get("learning_rate", 2e-5)),
-        warmup_ratio=float(config.get("warmup_ratio", 0.1)),
-        weight_decay=float(config.get("weight_decay", 0.01)),
-        evaluation_strategy=config.get("evaluation_strategy", "epoch"),
-        save_strategy=config.get("save_strategy", "epoch"),
-        logging_steps=config.get("logging_steps", 10),
-        fp16=False,  # Use bf16 if available
-        bf16=torch.cuda.is_available() and torch.cuda.get_device_capability()[0] >= 8,
-        push_to_hub=args.push_to_hub,
-        hub_model_id=config.get("hub_model_id"),
-        report_to="wandb",
-        remove_unused_columns=False,
-    )
+    training_args = _build_training_args(config, output_dir, args)
+
+    # ---- autoresearch mode knobs (karpathy/autoresearch adaptation) ----
+    # ar_mode: fast subsampled evals + optional wall-clock training budget so
+    # many experiments can run in sequence on limited GPU. Real (paper) runs
+    # leave these unset and keep the FULL evaluation protocol.
+    ar_mode = bool(config.get("ar_mode", False))
+    eval_mem_gen_n = config.get("eval_mem_gen_n")   # None -> full dataset
+    eval_mem_lf_n = config.get("eval_mem_lf_n")
+    eval_gen_n = config.get("eval_gen_n")
     
     # Setup huggingface-lifecycle manager for checkpoint push/pull
     hf_manager = None
@@ -348,6 +409,7 @@ def main():
         device=device,
         num_samples=config.get("gate_num_samples", 200),
         gen_dataset=mlpr_dataset.get_eval_dataset(),
+        gen_num_samples=config.get("gate_gen_num_samples"),
         probe_head=probe_head,
         entity2id=mlpr_dataset.entity2id or None,
         probe_num_samples=config.get("probe_eval_num_samples", 200),
@@ -393,6 +455,15 @@ def main():
         # AFTER the gate: the controller must observe the freshest A_mem/lambda
         callbacks.append(adaptive_callback)
 
+    # Fixed wall-clock training budget (autoresearch mode). Checked at epoch
+    # end; the final evaluation always runs so experiments stay comparable.
+    ar_budget = config.get("ar_time_budget_s")
+    budget_callback = None
+    if ar_budget:
+        budget_callback = TimeBudgetCallback(float(ar_budget))
+        callbacks.append(budget_callback)
+        print(f"[AR] training time budget: {float(ar_budget):.0f}s")
+
     # Create trainer
     print("Creating MLPR Trainer...")
     # The probe is a from-scratch linear head: it needs its own (much higher)
@@ -425,10 +496,27 @@ def main():
     # grab the raw (text) generalization dataset directly for generation eval.
     mem_eval_dataset = mlpr_dataset.get_mem_dataset()
     raw_gen_dataset = mlpr_dataset.get_eval_dataset()
-    baseline_a_mem, _ = evaluate_memorization(model, tokenizer, mem_eval_dataset, device)
-    baseline_a_mem_lf, _ = evaluate_memorization_likelihood(
-        model, tokenizer, mem_eval_dataset, device, num_samples=500)
-    baseline_a_gen, _ = evaluate_generalization(model, tokenizer, raw_gen_dataset, device)
+
+    def _select_n(ds, n):
+        """Deterministic head-of-dataset subsample (AR fast evals)."""
+        if n is None or n <= 0 or not hasattr(ds, "select"):
+            return ds
+        return ds.select(range(min(int(n), len(ds))))
+
+    if ar_mode:
+        # Fast baseline: ONE teacher-forced forward pass per batch. The two
+        # free-generation baseline evals are skipped (pre-trained model is
+        # known to score ~0 and they cost minutes of GPU).
+        baseline_a_mem, _ = 0.0, []
+        baseline_a_mem_lf, _ = evaluate_memorization_likelihood(
+            model, tokenizer, _select_n(mem_eval_dataset, eval_mem_lf_n or 200),
+            device)
+        baseline_a_gen, _ = 0.0, []
+    else:
+        baseline_a_mem, _ = evaluate_memorization(model, tokenizer, mem_eval_dataset, device)
+        baseline_a_mem_lf, _ = evaluate_memorization_likelihood(
+            model, tokenizer, mem_eval_dataset, device, num_samples=500)
+        baseline_a_gen, _ = evaluate_generalization(model, tokenizer, raw_gen_dataset, device)
     
     print(f"Baseline A_mem (generation): {baseline_a_mem:.4f}")
     print(f"Baseline A_mem (likelihood): {baseline_a_mem_lf:.4f}")
@@ -516,27 +604,100 @@ def main():
     print("Running Final Evaluation (Post-training)")
     print("="*50)
     
-    final_a_mem, mem_results = evaluate_memorization(model, tokenizer, mem_eval_dataset, device)
-    final_a_mem_lf, _ = evaluate_memorization_likelihood(
-        model, tokenizer, mem_eval_dataset, device, num_samples=500)
-    final_a_gen, gen_results = evaluate_generalization(model, tokenizer, raw_gen_dataset, device)
+    final_a_mem, mem_results = evaluate_memorization(
+        model, tokenizer, _select_n(mem_eval_dataset, eval_mem_gen_n), device)
+    final_a_mem_lf, mem_lf_results = evaluate_memorization_likelihood(
+        model, tokenizer, _select_n(mem_eval_dataset, eval_mem_lf_n or 500),
+        device, num_samples=None)
+    final_a_gen, gen_results = evaluate_generalization(
+        model, tokenizer, _select_n(raw_gen_dataset, eval_gen_n), device)
+
+    # Validity-aware headline metrics (v3 scoring): em_any counts an answer
+    # correct when it matches ANY entry of the record's valid_answers set.
+    def _any_acc(results):
+        if not results:
+            return 0.0
+        return sum(float(r.get("em_any", r.get("em", 0.0))) for r in results) / len(results)
+
+    final_a_mem_any = _any_acc(mem_results)
+    final_a_gen_any = _any_acc(gen_results)
     
     print(f"\nFinal A_mem (generation): {final_a_mem:.4f}")
+    print(f"Final A_mem (generation, any-valid): {final_a_mem_any:.4f}")
     print(f"Final A_mem (likelihood): {final_a_mem_lf:.4f}")
     print(f"Final A_gen: {final_a_gen:.4f}")
-    print(f"Final Gap: {final_a_mem - final_a_gen:.4f}")
-    
+    print(f"Final A_gen (any-valid): {final_a_gen_any:.4f}")
+    print(f"Final Gap (any-valid): {final_a_mem_any - final_a_gen_any:.4f}")
+
     # Log final metrics to W&B
     wandb.log({
         "final_a_mem": final_a_mem,
+        "final_a_mem_any": final_a_mem_any,
         "final_a_mem_lf": final_a_mem_lf,
         "final_a_gen": final_a_gen,
+        "final_a_gen_any": final_a_gen_any,
         "final_gap": final_a_mem - final_a_gen,
+        "final_gap_any": final_a_mem_any - final_a_gen_any,
         "baseline_a_mem": baseline_a_mem,
         "baseline_a_mem_lf": baseline_a_mem_lf,
         "baseline_a_gen": baseline_a_gen,
         "improvement_a_gen": final_a_gen - baseline_a_gen,
     })
+
+    # Per-sample eval details: enables offline McNemar's tests (proposal
+    # metric #4) and error analysis without re-running the model.
+    try:
+        eval_details_path = os.path.join(output_dir, "eval_details.json")
+        with open(eval_details_path, "w") as f:
+            json.dump({
+                "mem_generation": mem_results,
+                "mem_likelihood": mem_lf_results,
+                "gen_generation": gen_results,
+                "baseline": {
+                    "a_mem": baseline_a_mem,
+                    "a_mem_lf": baseline_a_mem_lf,
+                    "a_gen": baseline_a_gen,
+                },
+            }, f)
+        print(f"Eval details saved to: {eval_details_path}")
+    except Exception as e:
+        print(f"Warning: could not save eval details: {e}")
+
+    # ------------------------------------------------------------------
+    # Autoresearch summary block (grep-able, karpathy/autoresearch style).
+    # Primary score = validity-aware generalization accuracy A_gen^any.
+    # Guards printed alongside: A_mem^lf must not degrade; CE must not blow.
+    # ------------------------------------------------------------------
+    try:
+        last_log = trainer.state.log_history[-1] if trainer.state.log_history else {}
+        val_loss = last_log.get("eval_loss")
+        train_loss = last_log.get("train_loss")
+    except Exception:
+        val_loss, train_loss = None, None
+    print("\n" + "-" * 3)
+    print(f"exp_name:          {config.get('wandb_run_name', 'unnamed')}")
+    print(f"score:             {final_a_gen_any:.6f}")
+    print(f"a_gen_em_any:      {final_a_gen_any:.6f}")
+    print(f"a_gen_em_strict:   {final_a_gen:.6f}")
+    print(f"a_mem_em_any:      {final_a_mem_any:.6f}")
+    print(f"a_mem_em_strict:   {final_a_mem:.6f}")
+    print(f"a_mem_lf_any:      {final_a_mem_lf:.6f}")
+    if val_loss is not None:
+        print(f"val_loss_last:     {float(val_loss):.6f}")
+    if train_loss is not None:
+        print(f"train_loss:        {float(train_loss):.6f}")
+    print(f"lambda_final:      {lambda_scheduler.get_lambda():.6f}")
+    try:
+        if mem_gate_callback.history:
+            last_gate = mem_gate_callback.history[-1]
+            pm = last_gate.get("probe_acc_mem", last_gate.get("probe_mem", 0.0))
+            print(f"probe_mem_last:    {float(pm):.6f}")
+            print(f"gate_epochs:       {len(mem_gate_callback.history)}")
+    except Exception:
+        pass
+    if budget_callback is not None:
+        print(f"stopped_by_budget: {int(budget_callback.stopped_by_budget)}")
+    print("-" * 3)
     
     # Save final model locally
     print(f"\nSaving final model to: {output_dir}")
