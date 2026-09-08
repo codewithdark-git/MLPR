@@ -49,6 +49,7 @@ class MemorizationGateCallback(TrainerCallback):
         probe_head=None,
         entity2id=None,
         probe_num_samples: int = 200,
+        gen_num_samples: int = None,
     ):
         """
         Args:
@@ -70,6 +71,10 @@ class MemorizationGateCallback(TrainerCallback):
                 representation-space evidence for storage vs. use.
             entity2id: label_text -> probe class id mapping (from MLPDataset).
             probe_num_samples: Subsample cap for the probe accuracy estimate.
+            gen_num_samples: Subsample cap for the per-epoch A_gen generation
+                pass. None (default) evaluates the FULL D_gen (paper runs);
+                autoresearch mode sets a small cap (e.g. 64) so the per-epoch
+                gate cost stays inside the fixed training budget.
         """
         self.lambda_scheduler = lambda_scheduler
         self.mem_dataset = mem_dataset
@@ -80,6 +85,7 @@ class MemorizationGateCallback(TrainerCallback):
         self.max_new_tokens = max_new_tokens
         self.rng = random.Random(seed)
         self.gen_dataset = gen_dataset
+        self.gen_num_samples = gen_num_samples
         self.probe_head = probe_head
         self.entity2id = entity2id
         self.probe_num_samples = probe_num_samples
@@ -148,28 +154,12 @@ class MemorizationGateCallback(TrainerCallback):
                     max_new_tokens=self.max_new_tokens,
                     batch_size=small_bs,
                 )
-            self.lambda_scheduler.update_a_mem(a_mem, a_mem_lf)
-            current_lambda = self.lambda_scheduler.get_lambda()
-
-            # Optional per-epoch A_gen(t): the exact-match generalization curve.
-            # Runs AFTER the scheduler update so a failure here can never affect
-            # the gate signal; it only costs an extra generation pass.
-            a_gen = None
-            gen_results = None
-            if self.gen_dataset is not None:
-                try:
-                    a_gen, gen_results = evaluate_generalization(
-                        model,
-                        self.tokenizer,
-                        self.gen_dataset,
-                        device=self.device,
-                        batch_size=self.batch_size,
-                    )
-                except Exception as e:
-                    print(f"[MEM GATE] A_gen evaluation failed at epoch {state.epoch}: {e}")
-
-            # Optional per-epoch probe decodability (representation-space):
-            # cheap teacher-forced forward pass, no generation involved.
+            # Per-epoch probe decodability (representation-space): a cheap
+            # teacher-forced forward pass, no generation involved. v5: this
+            # runs BEFORE the scheduler update so gate_metric="probe" can
+            # use it as the saturation signal (representation knows vs LM
+            # head says -- the probe decodes the entity long before the
+            # output level can emit the exact surface string).
             probe_acc_mem = probe_acc_gen = None
             if self.probe_head is not None and self.l_star is not None:
                 try:
@@ -190,6 +180,34 @@ class MemorizationGateCallback(TrainerCallback):
                         )
                 except Exception as e:
                     print(f"[MEM GATE] probe decodability failed at epoch {state.epoch}: {e}")
+
+            self.lambda_scheduler.update_a_mem(
+                a_mem, a_mem_lf, probe_acc=probe_acc_mem)
+            current_lambda = self.lambda_scheduler.get_lambda()
+
+            # Optional per-epoch A_gen(t): the exact-match generalization
+            # curve. Runs AFTER the scheduler update so a failure here can
+            # never affect the gate signal; it only costs an extra
+            # generation pass.
+            a_gen = None
+            gen_results = None
+            if self.gen_dataset is not None:
+                try:
+                    gen_subset = self.gen_dataset
+                    if (self.gen_num_samples and hasattr(gen_subset, "select")
+                            and len(gen_subset) > self.gen_num_samples):
+                        gen_subset = gen_subset.select(
+                            range(self.gen_num_samples))
+                    a_gen, gen_results = evaluate_generalization(
+                        model,
+                        self.tokenizer,
+                        gen_subset,
+                        device=self.device,
+                        max_new_tokens=self.max_new_tokens,  # answers are short entities; the 100-token default tripled gate cost
+                        batch_size=self.batch_size,
+                    )
+                except Exception as e:
+                    print(f"[MEM GATE] A_gen evaluation failed at epoch {state.epoch}: {e}")
 
             entry = {
                 "epoch": state.epoch,
