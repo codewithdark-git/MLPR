@@ -9,11 +9,25 @@ from typing import Optional
 #   "likelihood" - teacher-forced greedy answer-token match (ParaRel-style
 #     recall probe). One forward pass; measures knowing, not saying.
 #   "max"        - max(generation, likelihood): opens if the model can
-#     recall the fact under ANY recall mode. Recommended (v2 default).
+#     recall the fact under ANY recall mode. v2 default.
+#   "probe"      - REPRESENTATION-SATURATION gate (v5): the signal is the
+#     linear probe's entity-decodability on D_mem mid-layer states. The
+#     50-epoch v4 runs proved output-level signals are UNREACHABLE at small
+#     scale (0.5B max A_mem_lf 0.39 < tau_0=0.8: the LM head learns the
+#     answer SURFACE long after the mid-layer representation organizes the
+#     fact -- AR runs measured probe train_acc 0.50 while A_mem_lf was
+#     still 0.000). Gating on probe decodability is (a) scale-aware by
+#     construction -- the probe is a fresh linear head, its accuracy
+#     reflects representation organization, not LM-head surface learning;
+#     (b) cheap -- one teacher-forced forward pass, no generation; (c) the
+#     causally correct variable -- MLPR claims mid-layer organization is
+#     what preserves downstream usability, so "the representation knows"
+#     is the right saturation signal for injecting the probe gradient.
 GATE_GENERATION = "generation"
 GATE_LIKELIHOOD = "likelihood"
 GATE_MAX = "max"
-_VALID_GATE_METRICS = (GATE_GENERATION, GATE_LIKELIHOOD, GATE_MAX)
+GATE_PROBE = "probe"
+_VALID_GATE_METRICS = (GATE_GENERATION, GATE_LIKELIHOOD, GATE_MAX, GATE_PROBE)
 
 
 class LambdaScheduler:
@@ -44,11 +58,15 @@ class LambdaScheduler:
         
         Args:
             lambda_0: Maximum lambda value (λ₀)
-            tau_0: Memorization threshold (τ₀) - probe activates when A_mem > τ₀
+            tau_0: Saturation threshold (τ₀) -- probe activates when the
+                gate signal exceeds it. With gate_metric="probe" the signal
+                is representation-space probe accuracy, so tau_0 lives in
+                [0, 1] probe-accuracy space (e.g. 0.5), NOT output-EM space.
             delta_0: Smoothing factor (Δ₀) for gradual activation
-            gate_metric: which A_mem signal drives the gate --
+            gate_metric: which signal drives the gate --
                 "generation" (v1, free-generation EM), "likelihood"
-                (v2, teacher-forced EM) or "max" (v2, both).
+                (v2, teacher-forced EM), "max" (v2, both) or "probe"
+                (v5, representation-space probe decodability).
         """
         if gate_metric not in _VALID_GATE_METRICS:
             raise ValueError(
@@ -62,6 +80,7 @@ class LambdaScheduler:
         # Raw per-mode memorization accuracies
         self.current_a_mem_gen: float = 0.0
         self.current_a_mem_lf: Optional[float] = None
+        self.current_probe_acc: Optional[float] = None
         
         # Effective gate signal (per gate_metric) -- this is what the
         # adaptive controller also reads via .current_a_mem
@@ -76,7 +95,8 @@ class LambdaScheduler:
         # Track if probe has been activated
         self.probe_activated: bool = False
     
-    def update_a_mem(self, a_mem: float, a_mem_likelihood: Optional[float] = None) -> None:
+    def update_a_mem(self, a_mem: float, a_mem_likelihood: Optional[float] = None,
+                     probe_acc: Optional[float] = None) -> None:
         """
         Update the memorization accuracies and recalculate lambda.
         
@@ -85,10 +105,16 @@ class LambdaScheduler:
             a_mem_likelihood: Teacher-forced likelihood EM on D_mem (0..1);
                 None when the likelihood evaluator is unavailable (falls back
                 to the generation signal regardless of gate_metric).
+            probe_acc: Representation-space probe decodability on D_mem
+                (0..1); drives gate_metric="probe" (v5). None when the probe
+                evaluator is unavailable.
         """
         self.current_a_mem_gen = float(a_mem)
         self.current_a_mem_lf = (
             None if a_mem_likelihood is None else float(a_mem_likelihood)
+        )
+        self.current_probe_acc = (
+            None if probe_acc is None else float(probe_acc)
         )
         
         # Effective gate signal per the configured metric
@@ -96,6 +122,15 @@ class LambdaScheduler:
             signal = self.current_a_mem_lf
         elif self.gate_metric == GATE_MAX and self.current_a_mem_lf is not None:
             signal = max(self.current_a_mem_gen, self.current_a_mem_lf)
+        elif self.gate_metric == GATE_PROBE:
+            if self.current_probe_acc is not None:
+                signal = self.current_probe_acc
+            elif self.current_a_mem_lf is not None:
+                # Probe evaluator unavailable: degrade to the likelihood
+                # signal rather than silently never opening the gate.
+                signal = self.current_a_mem_lf
+            else:
+                signal = self.current_a_mem_gen
         else:
             signal = self.current_a_mem_gen
         self.current_a_mem = signal
@@ -143,6 +178,7 @@ class LambdaScheduler:
         self.current_a_mem = 0.0
         self.current_a_mem_gen = 0.0
         self.current_a_mem_lf = None
+        self.current_probe_acc = None
         self._current_lambda = 0.0
         self.memorization_saturated = False
         self.probe_activated = False
@@ -177,6 +213,7 @@ class LambdaScheduler:
             "a_mem": self.current_a_mem,
             "a_mem_gen": self.current_a_mem_gen,
             "a_mem_likelihood": self.current_a_mem_lf,
+            "probe_acc": self.current_probe_acc,
             "gate_metric": self.gate_metric,
             "tau_0": self.tau_0,
             "lambda_0": self.lambda_0,
