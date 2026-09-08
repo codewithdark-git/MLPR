@@ -1,0 +1,6 @@
+commit	score	mem_gb	status	description
+b082f18	0.000000	0.0	keep	ar01-v1-control: v1 data + v4 config, 360s budget. score=a_gen_em_any=0 CONFIRMS degenerate generalization on v1 data (multi-answer EM flaw); a_mem_lf=0.045, train_loss 5.71 (warmup fix verified)
+ar07c	0.000000	0.0	keep	probe-gate tau_0=0.3: gate OPENS at ep9 (lambda 0->0.0875) — first mechanism activation at 0.5B; equal score, tie-break train_loss 4.606 vs 4.706 control
+ar08c	0.000000	0.0	keep	always-on (tau_0=-0.1): lambda=0.3 from ep1; mean train_loss 2.757 vs 4.706 control = 1.7x faster optimization — probe gradient accelerates memorization (primary AR finding)
+ar05	0.000000	0.0	keep	control output-gate 0.8: lambda==0 all 12 epochs (mechanism inert; confirms scale-unreachable output gate)
+ar06c	0.000000	0.0	discard	probe-gate tau_0=0.5: plateau probe 0.31 < 0.5 never opens; threshold above 12-epoch representation saturation
