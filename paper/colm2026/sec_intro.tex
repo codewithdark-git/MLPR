@@ -12,8 +12,8 @@ or refusing when unsure---arrives late or not at all
 \citep{kandpal2023large,allen2023physics}. For practitioners this gap is
 expensive: a model that \emph{knows} an entity (its answer is recoverable
 from its internal states) but cannot \emph{say} it under mild distribution
-shift will silently fail downstream, and standard observables such as
-training loss or held-out perplexity cannot distinguish the two regimes.
+shift will silently fail downstream, and standard observables cannot
+distinguish the two regimes.
 
 We propose to make this distinction measurable \emph{during} training, and
 to act on it. Our approach, MLPR (Mid-Layer Probe Regularization), wraps a
@@ -25,118 +25,117 @@ that cannot steer the backbone. Second, a teacher-forced likelihood metric
 estimates recall saturation $\amemlf$ each epoch by scoring the answer
 tokens given the training-format question---a ``knowing'' signal that, unlike
 free-generation exact match, does not conflate knowledge with answer
-extraction. Third, a saturation gate compares $\amemlf$ against a threshold
-$\tau_0$ and, once crossed, ramps in a probe-alignment loss with weight
-$\lambda(t)$ so that the backbone is regularized toward keeping acquired
+extraction. Third, a saturation gate compares a monitored signal against a
+threshold $\tau_0$ and, once crossed, ramps in a probe-alignment loss with
+weight $\lambda(t)$ so that the backbone is regularized toward keeping acquired
 identities linearly decodable at the mid layer. An eval-aware adaptive
 controller completes the loop by damping the learning rate when held-out
 loss degrades, subject to an explicit floor that keeps memorization
 dynamics alive.
 
-We instantiate MLPR on Qwen2.5-0.5B-Instruct and Qwen2.5-7B-Instruct
-\citep{qwen2024qwen25}, training each on a synthetic entity-question corpus
-with a 1{,}600-entity vocabulary and full per-epoch telemetry (adapters,
-probe states, gate and controller histories) for up to 50 epochs. The
-resulting two-scale dataset of training dynamics yields findings we
-summarize here and develop in Section~\ref{sec:results}:
+We instantiate MLPR on Qwen2.5-0.5B-Instruct and Qwen3-1.7B
+\citep{qwen2024qwen25,qwen3}, training a grid of ten fully
+instrumented runs (24 epochs; two 16-epoch censored replicates) on a
+synthetic entity-question corpus with
+a 1{,}600-entity vocabulary (per-step losses, per-epoch gate
+evaluations, per-sample final evaluations, adapters and probe
+checkpoints). The grid crosses two gate signals---output-likelihood
+recall vs.\ representation-space probe decodability---with three
+engagement schedules (sustained, decayed-to-zero, output-triggered),
+completing the engagement-schedule arm that was budget-censored in our
+earlier large-scale study. The resulting dataset of training dynamics
+yields findings we summarize here and develop in
+Section~\ref{sec:results}:
 
 \begin{itemize}[leftmargin=1.4em,itemsep=1pt,topsep=2pt]
-  \item \textbf{Recall saturation is scale-dependent}
-  (Section~\ref{sec:res:sat}). Under an identical corpus and budget, the
-  7B model's likelihood recall $\amemlf$ follows an S-curve that crosses
-  $\tau_0{=}0.8$ at epoch 24 and reaches $0.875$ by epoch 27, whereas the
-  0.5B model climbs slowly to $0.39$ over 50 epochs. The MLPR gate
-  consequently opens only at the larger scale, and we observe the
-  full activation transient---$\lambda(t)$ ramping from $0.015$ to $0.225$
-  across three epochs---live in training logs.
-  \item \textbf{Knowing and saying dissociate sharply}
-  (Section~\ref{sec:res:gap}). At gate activation the 7B model recalls
-  $82.5\%$ of training entities under teacher forcing, yet produces the
-  exact string under free generation only $2\%$ of the time and
-  transfers to paraphrased prompts $0\%$ of the time. Token-level recall
-  reaches $98.7\%$, locating the failure in answer assembly rather than
-  identity storage.
+  \item \textbf{The gate signal decides when engagement is possible}
+  (Section~\ref{sec:res:sat}). The probe's representation decodability
+  crosses its threshold at epoch 3 (0.5B) and epochs 4--6 (1.7B), while
+  the output-likelihood signal crosses $\tau_0{=}0.8$ only at epoch
+  17--19---and in one output-gated replicate never crosses at all.
+  Gating on the representation is scale-aware by construction; gating
+  on the output is reachable at scale but unstable in crossing time.
+  \item \textbf{The engagement schedule decides whether memorization
+  completes} (Section~\ref{sec:res:sched}). Under identical data, seed,
+  and optimizer, final recall spans $0.012$--$0.934$ at 1.7B. Late
+  output-triggered engagement reaches SFT parity ($0.926$ vs.\ $0.934$,
+  McNemar $p{=}0.83$) and completes the regularized phase---8 stable
+  epochs at full probe weight---that our earlier large-scale run left
+  budget-censored. Early sustained injection is high-variance
+  ($0.109$, $0.805$); transient injection that decays to zero
+  collapses recall to $0.012$ while the probe still decodes $94.8\%$
+  of entities.
+  \item \textbf{Knowing and saying dissociate at both scales}
+  (Section~\ref{sec:res:gap}). Teacher-forced recall reaches
+  $0.91$--$0.93$ and token-level recall $0.99$, yet free-generation EM
+  stays $\le 0.012$ and generalization EM $\le 0.004$ in \emph{every}
+  arm: the saying gap is invariant across a $3.4\times$ parameter
+  range and across all schedules.
   \item \textbf{Probes detect memorization early and cheaply}
-  (Section~\ref{sec:res:probe}). The mid-layer probe separates memorized
-  from held-out entities ($7$--$11\%$ train-batch accuracy vs.\ $0\%$
-  at chance $1/1600$) within a few epochs, and its loss falls orders of
-  magnitude below chance at 7B, providing an early-warning signal of
-  saturation that precedes any behavioral metric.
-  \item \textbf{Eval-aware control needs a floor}
-  (Section~\ref{sec:res:control}). Rising held-out loss is the signature
-  of memorization that the gate waits for; an earlier controller design
-  responded by decaying the learning rate without bound (cumulative
-  multiplier $1.0{\to}0.17$), freezing exactly the dynamics it was meant
-  to study. A bounded damping floor ($0.5\times$) fixes the spiral and is
-  validated across two 50-epoch-class runs and unit tests.
+  (Section~\ref{sec:res:control}). The probe crosses $0.5$ decodability
+  between epochs 4 and 7 everywhere, leading output recall by 8--18
+  epochs (and leading arms whose output never crosses at all), with
+  loss two orders of magnitude below chance.
   \item \textbf{Updates concentrate in upper-layer MLPs}
-  (Section~\ref{sec:res:anatomy}). Computing
-  $\Delta W = \tfrac{\alpha}{r}BA$ per LoRA-adapted projection shows
-  $70$--$73\%$ of update mass in MLP projections and $56$--$58\%$ in the
-  upper half of layers, consistent with factual storage accounts
-  \citep{meng2022rome,geva2021ffn}.
+  (Section~\ref{sec:res:anatomy}). $\Delta W = \tfrac{\alpha}{r}BA$ per
+  LoRA-adapted projection puts $65$--$71\%$ of update mass in MLP
+  projections, key/value attention nearly untouched, consistent with
+  factual storage accounts \citep{meng2022rome,geva2021ffn}.
 \end{itemize}
 
 Our contributions are: (i) a training-time instrumentation stack---probe,
-likelihood-based recall metric, saturation gate, and bounded adaptive
-controller---that turns the knowing--using gap into an observable,
-thresholdable quantity; (ii) a two-scale study showing that recall
-saturation, and hence gate activation, is scale-dependent within a fixed
-compute budget, with the activation transient captured live; (iii) a
-dissociation analysis separating teacher-forced recall, free-generation
-exact match, substring containment, and paraphrase transfer; and (iv) a
-documented failure mode and repair for eval-aware learning-rate
-controllers in memorization regimes. All telemetry, code, and trained
-adapters are released.
+likelihood-based recall metric, saturation gate with selectable signal,
+and engagement schedules---that turns the knowing--using gap into an
+observable, thresholdable quantity; (ii) a completed
+engagement-schedule grid at two scales with paired McNemar analysis,
+providing the first fully exercised regularized phase (8 epochs at
+full probe weight) and its outcome parity with SFT; (iii) a
+dissociation analysis separating representation decodability,
+teacher-forced recall, free-generation EM, and chaining/intersection
+transfer, including a representation-without-output regime induced by
+transient engagement; and (iv) engineering lessons from instrumenting
+real runs, including a documented failure mode and repair for
+eval-aware learning-rate controllers (Appendix~\ref{app:spiral}).
+All telemetry, code, and trained adapters are released.
 
 \section{Related Work}
 \label{sec:related}
 
-\textbf{Probing internal representations.} Linear probes on hidden states
-are a standard instrument for asking what models encode
+\textbf{Probing internal representations.} Linear probes are a standard
+instrument for asking what models encode
 \citep{alain2017probes,belinkov2022probing}; control tasks guard against
 probes that exploit surface statistics \citep{hewitt2019control}. Our
-probe differs in role: rather than auditing a static checkpoint, it is
-trained \emph{alongside} the run (on detached states) and its readings
-drive a control decision---whether to activate a regularization
-pathway---turning the probe from a diagnostic into a controller input.
-The probe is deliberately linear; richer readouts such as sparse
-autoencoders \citep{bricken2023monosemanticity} or circuit analyses
-\citep{elhage2021mathematical} could substitute in future work.
+probe differs in role: trained \emph{alongside} the run on detached
+states, its readings drive a control decision---activating a
+regularization pathway---turning it from a diagnostic into a controller
+input. Richer readouts \citep{bricken2023monosemanticity} could
+substitute in future work.
 
-\textbf{Knowledge storage and localization.} Mechanistic and editing
-studies localize factual knowledge in mid-to-upper layers, particularly
-MLP blocks that behave as key--value memories
+\textbf{Knowledge storage and memorization dynamics.} Mechanistic and
+editing studies localize factual knowledge in mid-to-upper MLP blocks
+that behave as key--value memories
 \citep{meng2022rome,meng2023memit,geva2021ffn,dai2022knowledgeneurons,
-decao2021editing,mitchell2022mend}. Our anatomy analysis
-(Section~\ref{sec:res:anatomy}) is consistent with this picture from the
-direction of training dynamics rather than causal editing. Synthetic
-entity corpora with known ground truth have been used to study capacity
-and retrieval \citep{allen2023physics}; our generator follows this
-tradition but exposes per-epoch recall dynamics rather than post-hoc
-capacity estimates.
-
-\textbf{Memorization dynamics.} Memorization of training data is
-well-documented at scale \citep{carlini2023quantifying,zhang2017understanding},
-and large models memorize \emph{more} before they overfit in loss terms
-\citep{tirumala2022memorization}. Knowledge acquisition is strongly
-scale-dependent \citep{kaplan2020scaling}, and long-tail facts are
-learned poorly without upweighting \citep{kandpal2023large}; capacity
-analyses of synthetic stores report sharp size thresholds for retrieval
-\citep{allen2023physics}. Our two-scale experiment gives a fine-grained,
-per-epoch view of this phenomenon in the fine-tuning regime. The
-dissociation we measure between teacher-forced recall and free-generation
-production extends paraphrase-consistency findings
-\citep{elazar2021measuring,mallen2023pararel} into training dynamics, and
-recalls the competence--expression decoupling of grokking
-\citep{power2022grokking}, here driven by data format rather than weight
-decay.
+mitchell2022mend}; our anatomy analysis is consistent with this picture
+from the direction of training dynamics. Synthetic entity corpora with
+known ground truth have been used to study capacity and retrieval
+\citep{allen2023physics}; our generator follows this tradition but
+exposes per-epoch recall dynamics. Memorization of training data is
+well documented \citep{carlini2023quantifying,zhang2017understanding},
+large models memorize more before they overfit in loss terms
+\citep{tirumala2022memorization}, and knowledge acquisition is strongly
+scale-dependent \citep{kaplan2020scaling,kandpal2023large}; our grid
+gives a fine-grained per-epoch view in the fine-tuning regime. The
+dissociation we measure extends paraphrase-consistency findings
+\citep{elazar2021measuring,mallen2023pararel} into training dynamics,
+and recalls the competence--expression decoupling of grokking
+\citep{power2022grokking}, here driven by data format rather than
+weight decay.
 
 \textbf{Adaptive training control.} Adaptive learning-rate schedules
 respond to loss plateaus or gradient statistics; our controller adds a
-held-out-loss criterion with a principled twist specific to the
-memorization regime: because rising held-out loss is the very signal the
-gate waits for, damping must be bounded lest the controller extinguish
-the phenomenon it monitors. We are not aware of prior work that analyzes
-this controller--phenomenon interaction, which we document with a
-negative result (an unbounded decay spiral) and its repair.
+held-out-loss criterion with a twist specific to the memorization
+regime: because rising held-out loss is the very signal the gate waits
+for, damping must be bounded lest the controller extinguish the
+phenomenon it monitors. We are not aware of prior work analyzing this
+controller--phenomenon interaction; we document a negative result (an
+unbounded decay spiral) and its repair.

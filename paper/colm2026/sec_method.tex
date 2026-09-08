@@ -21,18 +21,19 @@ the anchor token is read by a linear probe $p_\phi$ (flame) that
 predicts the entity identity; during warm-up the probe observes a
 \emph{detached} copy of the state ($\oslash$, no gradient into
 $\theta$). \textbf{Bottom --- control pathway (per epoch):} the
-saturation gate (gauge) compares teacher-forced recall
-$\rho=\max(\amemlf,\amemem)$ against $\tau_0{=}0.8$; once it opens,
+saturation gate (gauge) compares a monitored signal $\rho$---teacher-
+forced recall $\amemlf$ or the probe's representation decodability
+$\rho_{\mathrm{rep}}$---against $\tau_0$; once it crosses,
 $\lambda(t)$ ramps the probe-alignment loss into the total objective
-(ramp inset), and an eval-aware controller modulates the learning rate
-under a damping floor $m\ge m_{\min}{=}0.5$ (floor inset). Numbered
-badges trace the example: (1)~sample enters; (2)~frozen+LoRA forward;
-(3)~detached mid-layer probe read; (4)~epoch-end recall evaluation
-(208-prompt subsample); (5)~gated loss weight; (6)~optimizer updates
-trainable parameters only. The amber card reports the realized 7B run:
-the gate opened at epoch 24 ($\amemlf{=}0.805\ge\tau_0$) and $\lambda$
-ramped $0.015\!\to\!0.075\!\to\!0.225$ toward $\lambda_0{=}0.3$,
-whereas the 0.5B run never crossed the threshold ($\max 0.39$).}
+(ramp inset), with an optional linear decay to zero ($\lambda$-decay
+schedule). Numbered badges trace the example: (1)~sample enters;
+(2)~frozen+LoRA forward; (3)~detached mid-layer probe read; (4)~epoch-
+end recall evaluation (256-prompt subsample); (5)~gated loss weight;
+(6)~optimizer updates trainable parameters only. The amber card
+reports the realized 1.7B output-gated run: the gate opened at epoch 17
+($\amemlf{=}0.885\ge\tau_0$), and the live per-epoch re-evaluation is
+visible when the signal re-enters the band at epoch 18 and $\lambda$
+drops $0.3\!\to\!0.075$ before re-ramping.}
 \label{fig:method}
 \end{figure*}
 
@@ -73,16 +74,14 @@ The probe $p_\phi:\mathbb{R}^{d}\!\to\!\mathbb{R}^{V_e}$ is a single
 linear layer over the entity vocabulary $V_e$ (here $|V_e|{=}1600$),
 trained from the first step on detached states at
 $l^\star{\approx}L/2$ with its own learning rate
-($10^{-3}$ vs.\ $2{\times}10^{-5}$ for the backbone), so that it
+($2{\times}10^{-3}$ vs.\ $2{\times}10^{-4}$ for the backbone), so that it
 converges quickly enough to be informative early. Because the probe
 gradient is detached during warm-up, it is a pure observer; only after
 gate activation does $\mathcal{L}_{\mathrm{probe}}$ back-propagate into
 $\theta$, at which point it encourages the backbone to keep acquired
 entity identities linearly decodable at $l^\star$.
 
-Free-generation exact match is a poor saturation signal: a model may
-encode the correct answer yet fail to emit it in the right surface form.
-We therefore measure recall with a teacher-forced likelihood probe: for
+We measure recall with a teacher-forced likelihood probe: for
 each memorization prompt (answer suffix stripped), the answer tokens are
 scored in a single forward pass and the greedy per-sample match is
 \begin{equation}
@@ -92,35 +91,51 @@ scored in a single forward pass and the greedy per-sample match is
 \end{equation}
 with a token-level variant that credits partial answers. The epoch-level
 recall is $\amemlf = \mathbb{E}_{\mathcal{S}}[\mathrm{lf}]$ on a fixed
-subsample $\mathcal{S}$ of $\mathcal{D}_{\mathrm{mem}}$ (208 prompts).
+subsample $\mathcal{S}$ of $\mathcal{D}_{\mathrm{mem}}$ (256 prompts).
 We additionally log the free-generation exact match
-$\amemem$, substring containment, paraphrased generalization accuracy
-$\agen$ on $\mathcal{D}_{\mathrm{gen}}$, and the probe's own
-train/held-out accuracies, giving a five-channel view of the same
-underlying state change.
+$\amemem$, substring containment, chaining/intersection generalization
+accuracy $\agen$ on $\mathcal{D}_{\mathrm{gen}}$, and the probe's own
+entity-decodability on memorized states, giving a multi-channel view
+of the same underlying state change.
 
-\subsection{Saturation gate and $\lambda(t)$}
+\subsection{Saturation gate, $\lambda(t)$, and engagement schedules}
 \label{sec:method:gate}
 
-Let $t$ index the training step and $T$ the total step budget. The gate
-uses the maximum of the likelihood and free-generation recall signals,
-$\rho(t) = \max(\amemlf, \amemem)$, and a threshold $\tau_0$. Before
-$\rho \ge \tau_0$ the gate is closed ($\lambda{=}0$) and training is
-pure SFT. After the first crossing at step $t_0$, the weight ramps
-linearly over a fraction $\delta_0$ of the budget,
+Let $t$ index epochs. The gate monitors a signal $\rho(t)$ and applies
+the same smooth-threshold rule at every evaluation,
 \begin{equation}
   \lambda(t) = \lambda_0 \cdot
-    \min\!\Bigl(1,\ \tfrac{t - t_0}{\delta_0 T}\Bigr),
-  \qquad t \ge t_0,
+    \min\!\Bigl(1,\ \max\!\bigl(0,\ \tfrac{\rho(t) - \tau_0}{\Delta_0}\bigr)\Bigr),
   \label{eq:ramp}
 \end{equation}
-so the regularization is introduced gradually ($\lambda_0{=}0.3$,
-$\tau_0{=}0.8$, $\delta_0{=}0.1$ here). The maximum over the two recall
-modes makes the gate robust to the answer-extraction artifact
-\citep{mallen2023pararel}: in pilot runs the free-generation signal
-plateaued at $0$--$12\%$ and never opened a gate that required it, while
-the likelihood signal crossed the same threshold at scale
-(Section~\ref{sec:res:sat}).
+so $\lambda$ is $0$ below $\tau_0$, ramps linearly across the band
+$[\tau_0, \tau_0{+}\Delta_0]$, and holds at $\lambda_0$ above it; the
+per-epoch re-evaluation makes engagement follow the signal in both
+directions (a dip back into the band lowers $\lambda$). Two signals
+$\rho$ are studied. The \emph{output-likelihood gate} uses the
+proposal-faithful $\rho=\amemlf$ with $\tau_0{=}0.8$,
+$\Delta_0{=}0.05$: engagement is deferred until the model can actually
+recall the facts, which makes onset data-dependent and, we find,
+stochastic across replicates. The \emph{probe-saturation gate} uses
+the probe's entity-decodability on memorized mid-layer states,
+$\rho=\rho_{\mathrm{rep}}$ with $\tau_0{=}0.35$,
+$\Delta_0{=}0.15$: the signal is scale-aware by construction (a fresh
+linear head reflects representation organization, not LM-head surface
+learning), cheap (one forward pass), and the causally correct variable
+for MLPR---``the representation knows'' is exactly what the probe
+gradient must preserve. Finally, the \emph{$\lambda$-decay schedule}
+modulates any gate by a linear envelope after onset $t_0$,
+\begin{equation}
+  \lambda(t) \leftarrow \lambda(t) \cdot
+    \max\!\Bigl(0,\ 1 - \tfrac{t - t_0}{D}\Bigr),
+  \qquad D = 8,
+  \label{eq:decay}
+\end{equation}
+giving a transient engagement window that closes entirely; sustained
+engagement is Eq.~\ref{eq:ramp} alone. Together this yields the
+engagement-schedule grid of Section~\ref{sec:setup}: sustained vs.\
+decayed engagement under each signal, with $\lambda_0{=}0.3$
+throughout.
 
 \subsection{Eval-aware adaptive control with a damping floor}
 \label{sec:method:control}
@@ -129,25 +144,22 @@ Long memorization runs exhibit a characteristic trajectory: training
 loss plateaus after the format is learned, and held-out loss---bottoming
 early---then rises monotonically as capacity is redirected to training
 entities \citep{tirumala2022memorization}. An adaptive controller that
-treats the plateau as under-optimization may boost the learning rate
-exactly while validation degrades, and one that treats the rise as
-divergence may decay it without bound. Both failure modes occurred in
-our pilot runs. The controller we ship therefore (i) boosts only while
-held-out loss is not degrading, (ii) decays by a fixed factor after
-repeated degradation episodes, and (iii) enforces a \emph{damping floor}:
-the cumulative LR multiplier $m(t)$ applied by eval-driven decays is
-clamped to $m(t) \ge m_{\min}$ with $m_{\min}{=}0.5$,
+treats the rise as divergence may decay the learning rate without
+bound; the controller we ship clamps the cumulative LR multiplier
+applied by eval-driven decays,
 \begin{equation}
   m(t) \leftarrow \max\!\bigl(m_{\min},\ m(t^-)\cdot \gamma\bigr),
   \label{eq:floor}
 \end{equation}
-with decay factor $\gamma{=}0.7$. The floor is the load-bearing fix: in
-the memorization regime, held-out divergence is the phenomenon under
-study, not a fault, and unbounded damping freezes it
-(Section~\ref{sec:res:control} quantifies the spiral we observed without
-the floor). Every decision is logged per epoch, and all controller
-actions are failure-isolated so that instrumentation cannot crash
-training.
+with $m_{\min}{=}0.5$ and $\gamma{=}0.7$. The floor is the load-bearing
+fix: held-out divergence is the phenomenon under study, not a fault,
+and unbounded damping freezes it (Appendix~\ref{app:spiral} documents
+the spiral we observed without the floor and its validation sequence).
+Every decision is logged per epoch, and all controller actions are
+failure-isolated. In the production grid of this paper the LR schedule
+is a fixed cosine, so the engagement schedule is the only active
+intervention; the controller ships with the stack and the floor was
+exercised and held in our earlier 50-epoch-class production runs.
 
 \begin{algorithm}[t]
 \caption{MLPR training loop (one epoch)}

@@ -137,13 +137,13 @@
 
 % epoch-end eval node
 \node[chip, fill=gray!6, text width=2.0cm] (evaln) at (15.75,2.94)
-  {\scriptsize\bfseries epoch-end eval\\{\mini 208-prompt recall subsample}\\
+  {\scriptsize\bfseries epoch-end eval\\{\mini 256-prompt recall subsample}\\
    {\mini $A_{\mathrm{mem}}^{\mathrm{lf}},\,A_{\mathrm{mem}}^{\mathrm{em}},\,A_{\mathrm{gen}}$}};
 \draw[tele] (ans.north) |- (evaln.west);
 
 % probe pathway
 \node[chip, fill=trainC!10, draw=trainC!80!black, text width=2.52cm] (probe) at (6.05,0.50)
-  {\scriptsize\bfseries linear probe $p_\phi$\\{\mini $d\!\to\!|V_e|{=}1600$ · LR $10^{-3}$}};
+  {\scriptsize\bfseries linear probe $p_\phi$\\{\mini $d\!\to\!|V_e|{=}1600$ · LR $2{\times}10^{-3}$}};
 \pic at (4.62,0.82) {flame};
 \node[chip, fill=white, minimum width=2.26cm] (pred) at (9.00,0.50)
   {\scriptsize entity: Regulator\_Beta\_044\\{\mini probe argmax = id 243}};
@@ -162,8 +162,8 @@
 \node[chip, fill=gateC!8, draw=gateC, thick, anchor=west, text width=2.42cm,
       minimum height=1.24cm] (gate) at (0.30,-2.70)
   {\scriptsize\bfseries saturation gate\\[2pt]
-   {\mini $\rho=\max(A_{\mathrm{mem}}^{\mathrm{lf}},A_{\mathrm{mem}}^{\mathrm{em}})$}\\[1pt]
-   {\mini $\ge\ \tau_0{=}0.8$\;?}};
+   {\mini $\rho{\in}\{A_{\mathrm{mem}}^{\mathrm{lf}},\,\rho_{\mathrm{rep}}\}$}\\[1pt]
+   {\mini $\ge\ \tau_0$\;?}};
 \pic at (3.30,-2.62) {gauge};
 
 % closed / open chips
@@ -176,17 +176,18 @@
 
 % evidence card
 \node[chip, fill=evC!12, draw=evC!75!black, text width=3.42cm] (ev) at (1.95,-4.94)
-  {\scriptsize\bfseries worked example --- 7B run\\[1.5pt]
-   {\mini ep 24: $A_{\mathrm{mem}}^{\mathrm{lf}}{=}0.805\ \ge\ \tau_0$}\\[0.5pt]
-   {\mini gate opens; $\lambda$ ramps to $\lambda_0{=}0.3$}\\[0.5pt]
-   {\mini ($0.015{\to}0.075{\to}0.225$)}\\[0.5pt]
-   {\mini 0.5B: $\max A_{\mathrm{mem}}^{\mathrm{lf}}{=}0.39$: never}};
+  {\scriptsize\bfseries worked example --- 1.7B run\\[1.5pt]
+   {\mini ep 17: $A_{\mathrm{mem}}^{\mathrm{lf}}{=}0.885 \ge \tau_0$}\\[0.5pt]
+   {\mini gate opens at $\lambda_0{=}0.3$}\\[0.5pt]
+   {\mini ep 18: signal re-enters band}\\[0.5pt]
+   {\mini $\lambda$: $0.3{\to}0.075{\to}0.3$ (live)}};
 
 % lambda ramp inset
 \pic at (4.30,-2.62) {ramp};
 \node[font=\mini, black!60, align=center, anchor=north, text width=2.6cm] at (4.45,-2.92)
-  {$\lambda(t){=}\lambda_0\,\min\!\bigl(1,\,(t{-}t_0)/(\delta_0 T)\bigr)$\\[1pt]
-   {\mini $\lambda_0{=}0.3$, $\delta_0{=}0.1$}};
+  {$\lambda(t){=}\lambda_0\,\min\!\bigl(1,\tfrac{\rho(t)-\tau_0}{\Delta_0}\bigr)$\\[1pt]
+   {\mini $\lambda_0{=}0.3$; decay variant:}\\[0.5pt]
+   {\mini $\times\max(0,1{-}\tfrac{t-t_0}{D})$}};
 
 % total loss
 \node[chip, fill=yellow!14, draw=black!60, thick, minimum width=2.56cm,

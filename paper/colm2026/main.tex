@@ -24,8 +24,8 @@
 \SetAlCapFnt{\small}
 \SetAlCapNameFnt{\small}
 
-\title{Knowing but Not Saying: Scale-Dependent Recall Saturation\\
-  and Probe-Gated Regularization in Fine-Tuned Language Models}
+\title{Knowing but Not Saying: Probe-Saturation Gating and Engagement
+  Schedules for the Knowing--Using Gap in Fine-Tuned Language Models}
 
 % Authors are hidden automatically in submission mode (double-blind).
 % For the camera-ready version, replace with the real author list.
@@ -54,23 +54,31 @@ question is posed in the training format (knowing), while its ability to
 We introduce MLPR, a lightweight monitoring-and-regularization layer that
 makes this knowing--using gap measurable and actionable during training: a
 linear probe at a mid layer $l^\star$ reads entity identities from hidden
-states, a teacher-forced likelihood metric estimates recall saturation
-$\amemlf$ online, and a saturation gate ramps in a probe-alignment loss
-$\lambda(t)$ only once recall crosses a threshold $\tau_0$. We study
-Qwen2.5-0.5B and 7B-Instruct models trained for up to 50 epochs on a
-synthetic entity-question corpus with full telemetry. Three findings emerge.
-First, recall saturation is strongly scale-dependent: the 7B model crosses
-$\tau_0{=}0.8$ at epoch 24 ($\amemlf{=}0.825$ by epoch 25, $0.875$ by
-epoch 27), while the 0.5B model plateaus at $0.39$ after 50 epochs---the
-gate opens only at scale. Second, knowing and saying dissociate sharply:
-at the moment of gate activation the 7B model recalls $82.5\%$ of entities
-under teacher forcing yet answers only $2\%$ by free-generation exact match
-and $0\%$ on paraphrased generalization prompts. Third, a mid-layer probe
-detects memorization long before behavioral saturation, and all parameter
-updates concentrate in upper-layer MLP projections. We further identify and
-repair a failure mode of eval-aware learning-rate controllers---an
-unbounded decay spiral---with a bounded damping floor that preserves
-memorization dynamics. Code, telemetry, and trained adapters are released.
+states, and a saturation gate ramps in a probe-alignment loss
+$\lambda(t)$ once a monitored signal crosses a threshold $\tau_0$. We
+study Qwen2.5-0.5B and Qwen3-1.7B under an engagement-schedule grid of
+ten fully instrumented runs on a synthetic entity-question corpus,
+comparing two gate signals (output-likelihood recall vs.\
+representation-space probe decodability) and three engagement schedules
+(sustained, decayed, output-triggered). Three findings emerge. First,
+the gate signal decides when engagement is possible: the probe signal
+opens the gate at epoch 3--6 at both scales, 11--16 epochs before the
+output signal crosses its own threshold in the replicates where it
+ever does, and in one output-gated replicate it never crosses within
+budget. Second, the engagement
+schedule decides whether memorization completes: late output-triggered
+engagement reaches SFT recall parity ($0.926$ vs.\ $0.934$; paired
+McNemar $p{=}0.83$) and completes a previously budget-censored
+regularized phase with 8 stable epochs at full probe weight, whereas
+early sustained injection is high-variance ($0.109$--$0.805$) and
+transient injection with decay to zero collapses recall to $0.012$
+while the representation still decodes $94.8\%$ of entities---the
+sharpest knowing--saying dissociation we observe. Third, free-
+generation and generalization exact match stay at $\le 0.4\%$ in
+\emph{every} arm at both scales even as teacher-forced recall reaches
+$0.93$: the saying gap is scale-invariant, and all parameter updates
+concentrate in upper-layer MLP projections. Code, telemetry, and
+trained adapters are released.
 \end{abstract}
 
 \input{sec_intro}

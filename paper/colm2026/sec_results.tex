@@ -1,251 +1,261 @@
 \section{Experimental Setup}
 \label{sec:setup}
 
-\textbf{Corpus.} We generate a synthetic entity-question corpus in the
-spirit of controlled knowledge-store studies \citep{allen2023physics}: a
-vocabulary of $1{,}600$ invented entities, each assigned to generated
-questions with deterministic single-token-friendly answers. The
-memorization split $\mathcal{D}_{\mathrm{mem}}$ contains 1{,}200
-examples in a fixed template with an \texttt{Answer:} suffix; the
-generalization split $\mathcal{D}_{\mathrm{gen}}$ (450 prompts) asks the
-same facts through paraphrase and chaining templates never seen in
-training, so exact match on it measures \emph{use} rather than recall.
-Dataset construction details and templates are in
-Appendix~\ref{app:dataset}.
+\textbf{Corpus.} We use a synthetic entity-question corpus in the spirit
+of controlled knowledge-store studies \citep{allen2023physics}: a
+vocabulary of $1{,}600$ invented entities with deterministic,
+single-token-friendly answers. The memorization split
+$\mathcal{D}_{\mathrm{mem}}$ contains 1{,}200 question--answer pairs in
+a fixed training template with an \texttt{Answer:} suffix (stripped for
+all evaluations); the generalization split $\mathcal{D}_{\mathrm{gen}}$
+(450 prompts) re-asks the trained facts through \emph{chaining} and
+\emph{intersection} templates never seen in training, so exact match on
+it measures \emph{use} rather than recall. All entities are synthetic
+strings, so pre-training leakage is excluded by construction
+(Appendix~\ref{app:dataset}).
 
 \textbf{Models and training.} We train Qwen2.5-0.5B-Instruct and
-Qwen2.5-7B-Instruct \citep{qwen2024qwen25} with LoRA
-($r{=}16$, $\alpha{=}32$, dropout $0.05$) on all attention and MLP
-projections, probe layer $l^\star{=}12$ and $l^\star{=}14$
-respectively, backbone LR $2{\times}10^{-5}$ (cosine, $10\%$ warmup),
-effective batch 16, probe LR $10^{-3}$, gate parameters
-$\tau_0{=}0.8$, $\delta_0{=}0.1$, $\lambda_0{=}0.3$, and the controller
-of Section~\ref{sec:method:control} with $m_{\min}{=}0.5$. Each model
-trains for up to 50 epochs (75 steps/epoch) on a single H100 in bf16;
-the 0.5B run completed all 50 epochs (3{,}750 steps), while the 7B run
-was terminated by compute-budget exhaustion during epoch 28, after 27
-completed epochs with the gate open. All telemetry---per-epoch gate
-evaluations, controller decisions, probe states, matrices, and the
-complete stdout logs---is persisted to the Hugging Face Hub
-(Appendix~\ref{app:artifacts}).
+Qwen3-1.7B \citep{qwen2024qwen25,qwen3} with LoRA ($r{=}16$,
+$\alpha{=}32$, dropout $0.05$) on all seven attention and MLP
+projections ($8.8$M / $17.4$M trainable parameters), probe layers
+$l^\star{=}12/24$ and $14/28$, probe head $d\!\to\!1600$, backbone LR
+$2{\times}10^{-4}$, probe LR $2{\times}10^{-3}$ (cosine, $5\%$ warmup),
+effective batch 16 (75 steps/epoch), 24 epochs, seed 42, bf16, one
+A100-40GB GPU per run on Modal. The probe optimizer group is
+gradient-isolated from the backbone clip. Every run emits per-step
+losses, per-epoch gate evaluations, final per-sample evaluation
+records, and adapter/probe checkpoints to a persistent volume and to
+Weights \& Biases.
 
-\textbf{Metrics.} Each epoch we log: likelihood recall $\amemlf$
-\eqref{eq:lf}; token-level recall; free-generation exact match
-$\amemem$; substring containment of the target in the generation;
-paraphrase exact match $\agen$; the probe's accuracy on memorized vs.\
-held-out entity states; mean training loss; and held-out eval loss.
-Table~\ref{tab:main} summarizes the endpoints of both runs.
+\textbf{Arms.} At 0.5B we run the two-condition comparison: pure SFT
+($\lambda\equiv 0$) and probe-gated MLPR. At 1.7B we complete the
+engagement-schedule grid (the arm that was budget-censored in our
+earlier study): SFT; \emph{output-gated} MLPR (gate signal
+$\rho=\amemlf$, $\tau_0{=}0.8$, $\Delta_0{=}0.05$; two replicates);
+\emph{probe-gated} MLPR (signal $\rho_{\mathrm{rep}}$,
+$\tau_0{=}0.35$, $\Delta_0{=}0.15$; two replicates plus one 16-epoch
+censored replicate); and a \emph{$\lambda$-decay} arm whose probe
+weight decays linearly to zero over $D{=}8$ epochs after onset. Two
+further 16-epoch censored runs replicate the early-time trajectories
+(Appendix~\ref{app:curves}).
+
+\textbf{Metrics.} Each epoch we log teacher-forced recall $\amemlf$
+\eqref{eq:lf}, token-level recall, free-generation EM $\amemem$,
+chaining/intersection EM $\agen$, and the probe's entity-decodability
+$\rho_{\mathrm{rep}}$. Each run ends with a final $n{=}256$
+per-channel evaluation whose prompt-aligned per-sample records feed a
+paired McNemar test \citep{mcnemar1947} between arms
+(Table~\ref{tab:main} lists the endpoints of the seven completed
+24-epoch runs).
 
 \begin{table}[t]
 \centering
 \small
-\begin{tabular*}{\columnwidth}{@{\extracolsep{\fill}} l cc}
+\setlength{\tabcolsep}{3.4pt}
+\begin{tabular*}{\columnwidth}{@{\extracolsep{\fill}} l ccccc}
 \toprule
- & 0.5B (complete) & 7B (ep.\ 27) \\
+ & gate signal & onset & $\lambda_f$ & $\amemlf$ & $\agen$ \\
 \midrule
-epochs completed & 50 & 27 \\
-recall $\amemlf$ final & 0.380 & 0.875 \\
-token recall final & 0.900 & 0.987 \\
-free-gen EM $\amemem$ final & 0.025 & 0.020 \\
-substring containment & 0.280 & 0.765 \\
-paraphrase EM $\agen$ & 0.000 & 0.000 \\
-gate opened (epoch) & never & 24 \\
-$\lambda(t)$ final & 0.000 & 0.225 \\
-eval loss (min $\to$ final) & $3.36 \to 4.64$ & $3.21 \to 4.41$ \\
-LR multiplier final & 0.50 & 0.50 \\
+0.5B SFT           & ---        & ---      & 0.0 & 0.914 & 0.012 \\
+0.5B MLPR          & probe      & 3        & 0.3 & 0.922 & 0.000 \\
+\midrule
+1.7B SFT           & ---        & ---      & 0.0 & 0.934 & 0.000 \\
+1.7B out-gate (rep.\,1) & $\amemlf$ & never & 0.0 & 0.227 & 0.000 \\
+1.7B out-gate (rep.\,2) & $\amemlf$ & 17  & 0.3 & 0.926 & 0.000 \\
+1.7B probe-gate (rep.\,1) & probe & 5     & 0.3 & 0.805 & 0.004 \\
+1.7B probe-gate (rep.\,2) & probe & 6     & 0.3 & 0.109 & 0.000 \\
+1.7B $\lambda$-decay    & probe & 5 (decays) & 0.0 & 0.012 & 0.000 \\
 \bottomrule
 \end{tabular*}
-\caption{Run endpoints. The 0.5B model never saturates recall within
-budget; the 7B model crosses $\tau_0{=}0.8$ at epoch 24 and the gate
-opens. Free-generation exact match stays near zero at both scales even
-as likelihood recall reaches $0.875$; at 7B the generated answers
-contain the target as a substring $76.5\%$ of the time, isolating the
-failure in answer assembly.}
+\caption{Run endpoints (final $n{=}256$ evaluations). ``Onset'' is the
+first epoch with $\lambda>0$; out-gate rep.\,1 never crossed
+$\tau_0{=}0.8$ (max signal $0.198$). All arms reach at most $0.4\%$
+generalization EM while teacher-forced recall spans
+$0.012$--$0.934$: the saying gap is scale-invariant, and the
+engagement schedule---not the scale---decides whether the recall
+phase completes.}
 \label{tab:main}
 \end{table}
 
 \section{Results}
 \label{sec:results}
 
-\subsection{Recall saturation is scale-dependent, and the gate opens at scale}
+\subsection{When the gate can open is decided by the gate signal}
 \label{sec:res:sat}
 
-Figure~\ref{fig:sat}a overlays the two runs' likelihood recall. The 7B
-curve is S-shaped: a slow phase through epoch 11 ($\amemlf \le 0.11$),
-a rapid phase through epoch 22 ($0.77$), and crossing
-$\tau_0{=}0.8$ at epoch 24 ($0.805$), then $0.825$ and $0.875$ at
-epochs 25 and 27. The 0.5B curve rises roughly linearly after a long
-delay ($0.055$ at epoch 16, $0.22$ at epoch 31, $0.39$ at epoch 50,
-still improving by $\sim$0.01 per 5 epochs) and never reaches the
-threshold within twice the 7B crossing budget---a per-epoch view of the
-scale dependence of knowledge acquisition reported at pretraining scale
-\citep{kaplan2020scaling,kandpal2023large,allen2023physics}, within the
-\emph{same} architecture family, corpus, and optimizer.
+Figure~\ref{fig:sat} contrasts the two gate signals.
+\textbf{(a)} At 0.5B the probe-saturation gate opens at epoch 3: the
+probe already decodes $40.6\%$ of memorized entities from the mid
+layer (crossing $\tau_0{=}0.35$) while output recall is still $0.016$;
+$\lambda$ reaches $\lambda_0{=}0.3$ at epoch 4 and holds for 21
+epochs. The same arm's output signal does eventually cross
+$\tau_0{=}0.8$---but only at epoch 19, sixteen epochs later, and in
+our earlier 50-epoch runs at $4\times$ lower backbone LR the 0.5B
+output signal never approached the threshold at all (max $0.39$).
+\textbf{(b)} At 1.7B the output signal \emph{is} reachable, but its
+crossing time is unstable: one replicate first exceeds $\tau_0$ at
+epoch 17 ($\amemlf{=}0.885$); a replicate of the identical
+configuration never exceeds $0.198$. The crossing replicate also
+demonstrates the gate's live re-evaluation: at epoch 18 the signal
+dips back into the $[\tau_0,\tau_0{+}\Delta_0)$ band and $\lambda$
+drops $0.3\to0.075$ before re-ramping---the mechanism tracks the
+signal, not a schedule.
 
 \begin{figure*}[t]
 \centering
 \includegraphics[width=\textwidth]{fig_saturation.pdf}
-\caption{Scale-dependent saturation and live gate activation.
-\textbf{(a)} Likelihood recall $\amemlf$ vs.\ epoch for both scales;
-the 7B model crosses $\tau_0{=}0.8$ (dashed) at epoch 24 (star), the
-0.5B model plateaus at $0.39$ after 50 epochs.
-\textbf{(b)} The 7B knowing--saying dissociation: teacher-forced recall
-climbs to $0.875$ while paraphrase exact match ($\agen$) remains at
-$0.000$ and free-generation EM stays $\le 0.07$.
-\textbf{(c)} The gate weight $\lambda(t)$: closed for the entire 0.5B
-run; opened at epoch 24 at 7B with the ramp
-$0.015 \to 0.075 \to 0.225$ observed over epochs 24--27 (the run was
-budget-truncated before the ramp completed to $\lambda_0{=}0.3$).}
+\caption{Gate signals and engagement schedules, all curves from run
+telemetry. \textbf{(a)}~0.5B probe-gated arm: representation
+decodability $\rho_{\mathrm{rep}}$ crosses $\tau_0{=}0.35$ at epoch 3
+while output recall is still $\approx 0$; $\lambda(t)$ engages and
+holds. \textbf{(b)}~1.7B output-gated arms ($\rho=\amemlf$,
+$\tau_0{=}0.8$): one replicate crosses at epoch 17 (star) with the
+live re-ramp transient $\lambda{:}\,0.3\to0.075\to0.3$; the other
+never crosses within 24 epochs. \textbf{(c)}~The four 1.7B engagement
+schedules.}
 \label{fig:sat}
 \end{figure*}
 
-Because the crossing happened mid-run, the activation transient was
-logged live: the gate recorded
-$(\amemlf, \lambda) = (0.805, 0.015)$ at epoch 24,
-$(0.825, 0.075)$ at epoch 25, and $(0.875, 0.225)$ at epoch 27
-(Fig.~\ref{fig:sat}c). To our knowledge this is an unusually direct
-capture of a ``memorization threshold'' crossing during a real
-fine-tuning run; the ramp toward $\lambda_0{=}0.3$ was cut short by the
-compute budget, so the regularized phase (probe loss flowing into the
-backbone) is exercised but not yet studied at length---we return to this
-in Section~\ref{sec:res:post}.
+\subsection{The engagement schedule decides whether memorization completes}
+\label{sec:res:sched}
 
-\subsection{Knowing is not saying}
-\label{sec:res:gap}
-
-Figure~\ref{fig:gap} plots the five recall/production channels for both
-scales. Two dissociations are visible. First, \emph{knowing vs.\
-saying}: at 7B the teacher-forced recall reaches $0.875$ while
-free-generation exact match stays $\le 0.07$ and paraphrase exact match
-is exactly $0.000$ at every epoch; the 0.5B model shows the same
-qualitative pattern ($0.39$ vs.\ $0.025$ vs.\ $0.000$). Second,
-\emph{storage vs.\ assembly}: at epoch 27 the 7B generations contain
-the target string as a substring $76.5\%$ of the time while exact match
-is $2\%$---the entity identity is present in the output but framed
-wrong (extra tokens, wrong surface form), which is precisely the
-failure mode that free-generation EM conflates with ignorance and that
-the likelihood metric separates. Token-level recall ($0.987$ at 7B)
-confirms that the first answer token---the identity-bearing
-token---is almost always correct under forcing; what fails is the
-assembly of a well-formed answer under free decoding.
+Figure~\ref{fig:sched} shows the payoff of the 1.7B grid: five arms,
+identical data, seed, and optimizer, differing only in how the probe
+loss engages. Three regimes emerge.
+\emph{(i) Late, output-triggered engagement reaches SFT parity.} The
+arm that opened at epoch 17 finished at $\amemlf{=}0.926$ vs.\ the
+SFT control's $0.934$ (McNemar $b{=}12$, $c{=}10$, $p{=}0.83$), and
+exercised the regularized phase for 8 full epochs at
+$\lambda_0{=}0.3$: recall rose from $0.698$ at activation to $0.926$
+at the final evaluation with no instability. The phase our earlier
+large-scale run truncated after 3 epochs is here \emph{completed},
+stable, and harmless to recall.
+\emph{(ii) Early sustained probe injection is high-variance.} The two
+sustained replicates opened the gate one epoch apart (5 vs.\ 6) yet
+finished $0.805$ and $0.109$, both below SFT (rep.\,1: $b{=}40$,
+$c{=}7$, $p{=}1.1{\times}10^{-6}$; rep.\,2: $b{=}211$, $c{=}0$,
+$p{=}6{\times}10^{-64}$): early probe gradients do not accelerate
+output-level memorization at 1.7B.
+\emph{(iii) Transient engagement is the worst outcome.} The
+$\lambda$-decay arm engaged for 8 epochs, then lost the probe loss
+entirely; its recall finished at $0.012$---an order of magnitude
+below every other arm---while its representation decodability reached
+$0.948$ (Section~\ref{sec:res:gap}).
+Finally, the never-engaged replicate doubles as an SFT replication
+(its probe is detached, $\lambda\equiv0$): its takeoff lagged the
+control by about seven epochs and it was still mid-transition
+($0.227$, rising) at epoch 24. Memorization onset at this scale is
+therefore \emph{stochastic across runs}---precisely why engagement
+should be gated on a monitored signal, and why the signal must be one
+that actually fires.
 
 \begin{figure}[t]
 \centering
-\includegraphics[width=0.80\columnwidth]{fig_knowing_saying.pdf}
-\caption{Knowing vs.\ saying at both scales. Shaded region: the
-knowing--using gap between teacher-forced recall and free-generation
-production. Paraphrase exact match ($\agen$, dashed) never leaves zero
-at either scale.}
-\label{fig:gap}
+\includegraphics[width=0.94\columnwidth]{fig_schedule.pdf}
+\caption{The completed engagement-schedule grid at 1.7B: final recall
+spans $0.012$--$0.934$ under identical data, seed, and optimizer.
+Colored bars (bottom) mark each arm's engagement window
+($\lambda>0$). SFT parity is achieved by late output-triggered
+engagement; early sustained or transient engagement does not reach
+it.}
+\label{fig:sched}
 \end{figure}
 
-The knowing--using gap is thus not a delay that more epochs alone close
-at small scale: the 0.5B model's gap persists through 50 epochs
-($0.38$ vs.\ $0.025$), and the 7B model's gap is $0.855$ in recall
-terms at the moment the gate opens. Regularization or decoding
-interventions that target the \emph{saying} pathway (e.g., the
-$\lambda$-gated probe loss, or answer-assembly training) are therefore
-better placed than additional memorization pressure.
+\subsection{Knowing is not saying, at either scale}
+\label{sec:res:gap}
 
-\subsection{Dynamics: eval reversal and bounded adaptive control}
+Figure~\ref{fig:gap}a reports the endpoint channels for all arms.
+Teacher-forced recall reaches $0.91$--$0.93$ at both scales (and
+$0.81$ for the sustained replicate), token-level recall $0.99$, yet
+free-generation EM is $\le 0.012$ in \emph{every} arm and
+generalization EM $\le 0.004$. The saying gap is invariant across a
+$3.4\times$ parameter range and across all engagement schedules;
+regularizing the mid layer does not, by itself, close it.
+Figure~\ref{fig:gap}b plots the sharpest dissociation in the grid,
+the $\lambda$-decay arm: its probe decodability climbs to $0.948$
+(the representation organizes the entities essentially perfectly)
+while output recall never leaves $0.012$. Knowing---in the strong,
+linearly decodable sense---is demonstrably present without saying;
+the two capabilities are separable training targets, not two ends of
+one curve.
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=\textwidth]{fig_knowing_saying.pdf}
+\caption{Knowing vs.\ saying across the grid. \textbf{(a)}~Endpoints
+per run: teacher-forced recall (dark), free-generation EM (light),
+generalization EM (red). Every arm recalls; no arm generalizes.
+\textbf{(b)}~The $\lambda$-decay arm: representation decodability
+reaches $0.948$ while output recall stays at $0.012$; the sustained
+arm shows the same representation trajectory paired with a normally
+rising output curve.}
+\label{fig:gap}
+\end{figure*}
+
+\subsection{Dynamics and the probe as early-warning monitor}
 \label{sec:res:control}
 
-Figure~\ref{fig:dyn} shows the shared training dynamics. Held-out eval
-loss bottoms at epoch 3 for both scales ($3.36$ and $3.21$) and then
-rises monotonically ($4.64$ and $4.41$ by the last completed epoch)---
-the memorization signature. Training loss falls from $\sim$13 to
-$\sim$0.9 (0.5B) and $\sim$0.85 (7B), with the 7B run reaching lower
-CE earlier ($\sim$0.30 mean by epoch 25).
+Figure~\ref{fig:dyn}a shows the shared dynamics. CE plateaus at
+$\approx$1.4 (0.5B) and $\approx$2.7 (1.7B) once the template is
+learned, then drops late (epochs 12--16 at 1.7B) to $0.04$--$0.09$ in
+the arms whose recall completes; the three arms still mid-transition
+at epoch 24 ($\lambda$-decay, sustained rep.\,2, never-engaged)
+stall at $0.51$--$0.64$ instead, and in the decay arm the stall sets
+in right after the probe weight is removed. Until their gates open,
+the MLPR arms' CE is indistinguishable from their SFT controls: the
+detached probe is a pure observer during warm-up. The probe loss
+(Fig.~\ref{fig:dyn}b) falls from its random-head value ($\sim$17--18)
+to $0.05$--$0.16$, two orders of magnitude below chance
+$\ln 1600\approx 7.38$, within 20 epochs at both scales.
+
+Figure~\ref{fig:dyn}c overlays $\rho_{\mathrm{rep}}(t)$ for all six
+MLPR arms. The representation saturates early everywhere: the probe
+crosses $0.5$ between epochs 4 and 7 at both scales, while output
+recall crosses $0.5$ only at epochs 15--17 in the arms that get there
+at all, and never in three arms (Fig.~\ref{fig:dyn}d). The probe's
+head start is 13 epochs at 0.5B and 8--18 epochs at 1.7B---the
+measurable form of ``knowing precedes saying'': the mid-layer
+representation organizes acquired facts long before the LM head
+reliably produces them.
 
 \begin{figure*}[t]
 \centering
 \includegraphics[width=\textwidth]{fig_dynamics.pdf}
-\caption{Training dynamics. \textbf{(a)} Mean per-epoch training loss.
-\textbf{(b)} Held-out eval loss reverses at epoch 3 at both scales and
-rises thereafter---the memorization signature the gate waits for.
-\textbf{(c)} Controller behavior: both runs decay the LR twice under
-held-out divergence, then hold at the $0.5\times$ damping floor
-(dashed).}
+\caption{Dynamics and the early-warning probe. \textbf{(a)}~Per-epoch
+mean CE: SFT controls (dashed) and MLPR arms (solid) overlap until
+the gate opens; the $\lambda$-decay arm's CE stalls near its early
+plateau. \textbf{(b)}~Probe loss (log scale) falls far below chance
+($\ln 1600\approx 7.38$) during detached warm-up. \textbf{(c)}
+$\rho_{\mathrm{rep}}(t)$ for all MLPR arms: every curve saturates
+$>$0.9 regardless of the arm's output outcome. \textbf{(d)}~First
+crossing epoch of $0.5$ for the probe (purple) vs.\ output recall
+(blue): the probe leads by 8--18 epochs, and leads arms whose output
+never crosses ($>$24).}
 \label{fig:dyn}
 \end{figure*}
-
-The controller behaved identically at both scales: two eval-driven
-decays (epochs 6 and 8; multiplier $1.0 \to 0.7 \to 0.5$) followed by
-a hold at the floor for the rest of training, with plateau boosts
-correctly suppressed while eval loss degraded. This is the repaired
-behavior. Without the floor (pilot runs), the same controller applied
-consecutive $0.7\times$ decays and drove the multiplier to $0.17$,
-freezing memorization with $\amemlf$ pinned at $\sim$0.02 and making
-$\tau_0$ unreachable; Appendix~\ref{app:spiral} documents the failure
-and the validation sequence (unit tests plus a dedicated 5-epoch GPU
-gate check) that the repair passed before these production runs.
-
-\subsection{Probes read memorization before the model can say it}
-\label{sec:res:probe}
-
-Figure~\ref{fig:probe}a shows the probe's epoch-end accuracy on
-memorized vs.\ held-out entity states. At both scales the probe
-separates the two populations within a few epochs ($7$--$13\%$ vs.\
-$\approx 0\%$ at chance $1/1600$), and the separation tracks the
-saturation curve: at 7B the probe's memorization accuracy roughly
-doubles after the gate opens. The probe loss
-(Fig.~\ref{fig:probe}b) falls from chance $\ln 1600 \approx 7.38$ to
-below chance by orders of magnitude---reaching $\sim$$10^{-3}$ with
-$100\%$ train-batch accuracy at 7B---while remaining a pure observer
-during warm-up. Two practical readings follow: the probe is a cheap
-early-warning monitor (its signal is unambiguous epochs before any
-behavioral metric moves), and its health is verifiable online (loss
-far below chance, held-out accuracy at chance), addressing the classic
-probe-reliability concern \citep{hewitt2019control}.
-
-\begin{figure}[t]
-\centering
-\includegraphics[width=0.82\columnwidth]{fig_probe.pdf}
-\caption{Probe health. \textbf{(a)} Epoch-end probe accuracy on
-memorized ($\mathcal{D}_{\mathrm{mem}}$ subsample) vs.\ held-out
-($\mathcal{D}_{\mathrm{gen}}$) entity states; chance is $1/1600$.
-\textbf{(b)} Probe loss (log scale) falls far below chance at both
-scales during detached warm-up.}
-\label{fig:probe}
-\end{figure}
 
 \subsection{Update anatomy: upper-layer MLPs carry the memorization}
 \label{sec:res:anatomy}
 
-From the released adapters we compute the effective weight update
+From the released final adapters we compute
 $\Delta W = \tfrac{\alpha}{r} BA$ per adapted projection
-(Fig.~\ref{fig:anat}). The pattern is consistent across scales and
-consistent with the storage literature: MLP projections carry
-$69.7\%$ (0.5B) and $73.3\%$ (7B) of total update mass
-$\sum_l \lVert \Delta W \rVert_F$; the upper half of layers carries
-$57.8\%$ and $56.1\%$; and the top three modules are
-gate-, up-, and down-projection at both scales, with key/value
-attention projections nearly untouched. The 7B adapter analyzed here
-is the epoch-26 state, i.e., one to two epochs \emph{after} gate
-activation, so the concentration is not an artifact of an
-un-activated regime.
+(Fig.~\ref{fig:anat}). MLP projections carry $71.1\%$ (0.5B) and
+$65.0\%$ (1.7B) of total update mass $\sum_l \lVert \Delta W
+\rVert_F$; key/value attention projections are nearly untouched; and
+the top three (layer, module) cells are gate/up/down-projection in
+every case---at 1.7B they are the top-layer gate projections (layers
+21--23 of 28) of the post-activation arm, so the concentration holds
+\emph{after} eight epochs of probe-gradient flow, not merely in an
+un-activated regime. At 0.5B the mass is more mid-layer ($46.1\%$ in
+the upper half vs.\ $55.1\%$ at 1.7B).
 
 \begin{figure}[t]
 \centering
-\includegraphics[width=0.78\columnwidth]{fig_anatomy.pdf}
+\includegraphics[width=0.8\columnwidth]{fig_anatomy.pdf}
 \caption{Update anatomy $\lVert \Delta W \rVert_F$ per
-(layer, module). \textbf{(a)} 0.5B final adapter (epoch 50);
-\textbf{(b)} 7B adapter at epoch 26 (post-activation). MLP projections
-(gate/up/down) dominate at both scales; color scales are per-panel.}
+(layer, module) from the final adapters. \textbf{(a)}~0.5B
+probe-gated arm; \textbf{(b)}~1.7B late-onset arm (gate open from
+epoch 17). MLP projections dominate at both scales; color scales are
+per-panel.}
 \label{fig:anat}
 \end{figure}
-
-\subsection{The regularized phase and its truncation}
-\label{sec:res:post}
-
-Honesty about scope: the gate opened at 7B only $\sim$3 epochs before
-the compute budget terminated the run, so the post-activation phase
-(probe loss at $\lambda$ up to $0.225$ flowing into the backbone) is
-\emph{exercised and logged} but not yet studied over the tens of
-epochs its design assumes. Within the observed window the phase is
-stable (no loss or gradient spikes; $\amemlf$ continues to rise;
-no further controller interventions). Whether the probe-regularized
-phase closes the \emph{saying} gap---the motivation for the
-design---remains the central open question for the completed 7B run;
-the 0.5B run suggests it will not be answerable at that scale at all,
-since the gate never opens there within 50 epochs.

@@ -1,43 +1,45 @@
 \section{Hyperparameters and Configurations}
 \label{app:hyper}
 
-Table~\ref{tab:hyper} lists the exact configurations used for both
-production runs. Both jobs ran on a single NVIDIA H100 80~GB in bf16 via
-the Modal cloud platform, with the full stdout stream teed to a
-persistent volume and uploaded to the Hub after (and, on the 7B run,
-during) training. The W\&B project \texttt{knowing\_using\_gap} holds
-per-step and per-epoch curves, LoRA/probe matrix panels (every 5
-epochs), and locked checkpoint artifacts.
+Table~\ref{tab:hyper} lists the exact configuration shared by the
+production grid. All ten runs executed on Modal on a single NVIDIA
+A100 40~GB GPU in bf16, with the full stdout stream teed to a
+persistent volume; per-step and per-epoch curves, LoRA/probe matrix
+panels (every 4 epochs), and run summaries are in the W\&B project
+\texttt{knowing\_using\_gap}. Arm-specific gate settings are given in
+Table~\ref{tab:main}: probe-saturation gate
+($\tau_0{=}0.35,\Delta_0{=}0.15$), output-likelihood gate
+($\tau_0{=}0.8,\Delta_0{=}0.05$), decay horizon $D{=}8$ epochs, and
+$\lambda_0{=}0.3$ wherever the gate engages.
 
 \begin{table}[h]
 \centering
 \small
 \begin{tabular*}{\columnwidth}{@{\extracolsep{\fill}} l l l}
 \toprule
-Parameter & 0.5B run & 7B run \\
+Parameter & 0.5B runs & 1.7B runs \\
 \midrule
-Model & Qwen2.5-0.5B-Instruct & Qwen2.5-7B-Instruct \\
+Model & Qwen2.5-0.5B-Instruct & Qwen3-1.7B \\
 LoRA $r$ / $\alpha$ / dropout & 16 / 32 / 0.05 & 16 / 32 / 0.05 \\
 LoRA targets & q,k,v,o,gate,up,down & q,k,v,o,gate,up,down \\
 Probe layer $l^\star$ & 12 of 24 & 14 of 28 \\
-Probe head & $896 \to 1600$ & $3584 \to 1600$ \\
-Backbone LR & $2{\times}10^{-5}$ & $2{\times}10^{-5}$ \\
-Probe LR & $10^{-3}$ & $10^{-3}$ \\
-Schedule & cosine, warmup $10\%$ & cosine, warmup $10\%$ \\
-Batch (dev $\times$ accum) & $4 \times 4$ & $4 \times 4$ \\
+Probe head & $896 \to 1600$ & $2048 \to 1600$ \\
+Trainable params & 8.8M ($1.75\%$) & 17.4M ($1.00\%$) \\
+Backbone LR & $2{\times}10^{-4}$ & $2{\times}10^{-4}$ \\
+Probe LR & $2{\times}10^{-3}$ & $2{\times}10^{-3}$ \\
+Schedule & cosine, warmup $5\%$ & cosine, warmup $5\%$ \\
+Batch (dev $\times$ accum) & $8 \times 2$ & $4 \times 4$ \\
 Steps per epoch & 75 & 75 \\
-Epochs (planned) & 50 & 50 \\
-Epochs completed & 50 & 27 \\
-Gate metric / $\tau_0$ & max / 0.8 & max / 0.8 \\
-$\lambda_0$ / $\delta_0$ & 0.3 / 0.1 & 0.3 / 0.1 \\
-Controller decay $\gamma$ & 0.7 & 0.7 \\
-Damping floor $m_{\min}$ & 0.5 & 0.5 \\
-Boost factor / cap & $1.5$ / $8\times$ & $1.5$ / $8\times$ \\
-Lifecycle pushes & every 10 ep & every 10 ep \\
-Matrices to W\&B & every 5 ep & every 5 ep \\
+Epochs & 24 & 24 (two 16-ep.\ censored) \\
+Seed & 42 & 42 \\
+$\lambda_0$ & 0.3 & 0.3 \\
+Gate signals & $\rho_{\mathrm{rep}}$, $\amemlf$ & $\rho_{\mathrm{rep}}$, $\amemlf$ \\
+Decay horizon $D$ & --- & 8 epochs ($\lambda$-decay arm) \\
+Precision / GPU & bf16 / A100-40GB & bf16 / A100-40GB \\
+Matrices to W\&B & every 4 ep & every 4 ep \\
 \bottomrule
 \end{tabular*}
-\caption{Full hyperparameter configurations.}
+\caption{Full hyperparameter configurations for the production grid.}
 \label{tab:hyper}
 \end{table}
 
@@ -61,81 +63,92 @@ seen in training. Free-generation evaluations use left-padding,
 greedy decoding, and strict exact match after answer extraction; the
 likelihood evaluation \eqref{eq:lf} scores the first answer token and
 the token-level overlap under teacher forcing. The per-epoch gate
-evaluations run on a fixed random subsample of 208 memorization
-prompts (13 batches) plus the full $\mathcal{D}_{\mathrm{gen}}$, keeping
-epoch overhead at $\sim$1--2 minutes.
+evaluations run on a fixed subsample of 256 memorization prompts
+(32 batches) plus the generalization prompts, keeping epoch overhead
+at $\sim$1--2 minutes; the final evaluation of every run scores
+$n{=}256$ prompts per channel (memorization generation, memorization
+teacher-forced, and 174 chaining + 82 intersection generalization
+prompts) and dumps the per-sample records used by the McNemar tests.
 
 \section{Full Per-Epoch Curves}
 \label{app:curves}
 
-Table~\ref{tab:curves05} reports the 0.5B run every 5 epochs and
-Table~\ref{tab:curves7} the 7B run every 3 epochs (the complete
-per-epoch JSON histories are in the released telemetry).
-Eval loss is the held-out generalization-split loss logged by the
-trainer each epoch; $m(t)$ is the controller's cumulative LR
-multiplier.
+Table~\ref{tab:curves05} reports the 0.5B pair and
+Table~\ref{tab:curves17} the 1.7B grid every 4 epochs (the complete
+per-epoch JSON histories are in the released telemetry, one
+\texttt{gate\_history.json} per run). Recall values are the per-epoch
+gate evaluations on the 256-prompt subsample; the final-evaluation
+endpoints in Table~\ref{tab:main} are the independent $n{=}256$
+evaluations at run end, which agree with the last gate epoch to
+within $\pm 0.05$. The two censored 16-epoch runs (SFT and MLPR at
+1.7B) reproduce the early-time trajectories of their 24-epoch
+counterparts and end at final evaluations of $\amemlf{=}0.320$ (SFT,
+still rising) and $0.035$ (MLPR, probe gate open from epoch 4).
 
 \begin{table}[h]
 \centering
 \scriptsize
-\setlength{\tabcolsep}{3.2pt}
-\begin{tabular*}{\columnwidth}{@{\extracolsep{\fill}} r rrrrrr}
+\setlength{\tabcolsep}{3.6pt}
+\begin{tabular*}{\columnwidth}{@{\extracolsep{\fill}} r cccc}
 \toprule
-ep & $\amemlf$ & tok.\ & $\amemem$ & $\agen$ & $\lambda$ & eval \\
+ep & SFT $\amemlf$ & MLPR $\amemlf$ & $\lambda$ & $\rho_{\mathrm{rep}}$ \\
 \midrule
-1 & 0.000 & 0.337 & 0.000 & 0.000 & 0.000 & 5.03 \\
-5 & 0.000 & 0.748 & 0.000 & 0.000 & 0.000 & 3.96 \\
-10 & 0.010 & 0.758 & 0.000 & 0.000 & 0.000 & 4.23 \\
-15 & 0.025 & 0.771 & 0.000 & 0.000 & 0.000 & 4.22 \\
-20 & 0.030 & 0.786 & 0.005 & 0.000 & 0.000 & 4.40 \\
-25 & 0.125 & 0.819 & 0.005 & 0.000 & 0.000 & 4.45 \\
-30 & 0.240 & 0.857 & 0.055 & 0.000 & 0.000 & 4.50 \\
-35 & 0.275 & 0.866 & 0.010 & 0.000 & 0.000 & 4.55 \\
-40 & 0.355 & 0.895 & 0.050 & 0.000 & 0.000 & 4.57 \\
-45 & 0.375 & 0.899 & 0.010 & 0.000 & 0.000 & 4.61 \\
-50 & 0.380 & 0.900 & 0.025 & 0.000 & 0.000 & 4.64 \\
+1 & 0.000 & 0.000 & 0.000 & 0.047 \\
+4 & 0.008 & 0.000 & 0.300 & 0.797 \\
+8 & 0.016 & 0.000 & 0.300 & 0.906 \\
+12 & 0.016 & 0.008 & 0.300 & 0.938 \\
+16 & 0.469 & 0.352 & 0.300 & 0.930 \\
+20 & 0.945 & 0.844 & 0.300 & 0.930 \\
+23 & 0.938 & 0.906 & 0.300 & 0.945 \\
+24 & 0.922 & 0.891 & 0.300 & 0.914 \\
 \bottomrule
 \end{tabular*}
-\caption{0.5B run (complete, 3{,}750 steps). $m(t)$: $1.0$ (ep 1--5),
-$0.7$ (ep 6--7), $0.5$ (ep 8--50); one memorization diagnosis at the
-controller's stagnation trigger. The gate never opens.}
+\caption{0.5B pair (probe-gated MLPR vs.\ SFT). The probe signal
+crosses $\tau_0{=}0.35$ at epoch 3 and the gate holds
+$\lambda_0{=}0.3$ from epoch 4; output recall takes off around epoch
+14--16 in both arms and the endpoints are statistically
+indistinguishable (McNemar $p{=}0.84$).}
 \label{tab:curves05}
 \end{table}
 
 \begin{table}[h]
 \centering
 \scriptsize
-\setlength{\tabcolsep}{3.2pt}
-\begin{tabular*}{\columnwidth}{@{\extracolsep{\fill}} r rrrrrr}
+\setlength{\tabcolsep}{2.6pt}
+\begin{tabular*}{\columnwidth}{@{\extracolsep{\fill}} r cccccc}
 \toprule
-ep & $\amemlf$ & tok.\ & $\amemem$ & $\agen$ & $\lambda$ & eval \\
+ep & SFT & never & late & sust. & decay & sust.\,2 \\
 \midrule
-1 & 0.000 & 0.386 & 0.000 & 0.000 & 0.000 & 5.10 \\
-3 & 0.015 & 0.752 & 0.000 & 0.000 & 0.000 & 3.21 \\
-6 & 0.005 & 0.760 & 0.000 & 0.000 & 0.000 & 4.02 \\
-9 & 0.025 & 0.783 & 0.000 & 0.000 & 0.000 & 4.06 \\
-12 & 0.110 & 0.822 & 0.005 & 0.000 & 0.000 & 4.19 \\
-15 & 0.320 & 0.895 & 0.015 & 0.000 & 0.000 & 4.24 \\
-18 & 0.570 & 0.946 & 0.030 & 0.000 & 0.000 & 4.34 \\
-21 & 0.745 & 0.971 & 0.030 & 0.000 & 0.000 & 4.40 \\
-24 & \textbf{0.805} & 0.979 & 0.055 & 0.000 & 0.015 & 4.44 \\
-25 & 0.825 & 0.981 & 0.025 & 0.000 & 0.075 & 4.41 \\
-27 & 0.875 & 0.987 & 0.020 & 0.000 & 0.225 & --- \\
+1 & 0.000 & 0.010 & 0.000 & 0.000 & 0.021 & 0.010 \\
+4 & 0.000 & 0.000 & 0.010 & 0.000 & 0.000 & 0.000 \\
+8 & 0.000 & 0.010 & 0.000 & 0.000 & 0.000 & 0.010 \\
+12 & 0.094 & 0.010 & 0.094 & 0.031 & 0.000 & 0.000 \\
+16 & 0.573 & 0.031 & 0.698 & 0.375 & 0.000 & 0.000 \\
+20 & 0.896 & 0.125 & 0.938 & 0.771 & 0.021 & 0.062 \\
+24 & 0.948 & 0.177 & 0.927 & 0.740 & 0.021 & 0.104 \\
+\midrule
+\multicolumn{7}{l}{\emph{$\lambda(t)$ for the MLPR arms:}}\\
+8 & --- & 0.00 & 0.00 & 0.30 & 0.19 & 0.30 \\
+12 & --- & 0.00 & 0.00 & 0.30 & 0.04 & 0.30 \\
+16 & --- & 0.00 & 0.00 & 0.30 & 0.00 & 0.30 \\
+20 & --- & 0.00 & 0.30 & 0.30 & 0.00 & 0.30 \\
+24 & --- & 0.00 & 0.30 & 0.30 & 0.00 & 0.30 \\
 \bottomrule
 \end{tabular*}
-\caption{7B run (27 completed epochs; terminated during epoch 28 by
-compute-budget exhaustion, hence no epoch-28 eval). The crossing of
-$\tau_0{=}0.8$ at epoch 24 opens the gate; $\lambda(t)$ ramps to
-$0.225$ by epoch 27. Epoch-27 values were read from the live run log.}
-\label{tab:curves7}
+\caption{1.7B engagement-schedule grid ($\amemlf$ per epoch; $\lambda$
+below). ``never'': output gate never crossed ($\max 0.198$);
+``late'': output gate opened at epoch 17; ``sust.'': probe gate from
+epoch 5 (rep.\,2 from epoch 6); ``decay'': probe gate with linear
+decay to zero over $D{=}8$ epochs from onset.}
+\label{tab:curves17}
 \end{table}
 
 \section{The Decay-Spiral Failure and Its Repair}
 \label{app:spiral}
 
-\textbf{Failure.} In a pilot 50-epoch 0.5B run (v3), the eval-aware
-controller issued eval-driven decays every two epochs for five
-consecutive episodes while held-out loss diverged, driving the
+\textbf{Failure.} In a pilot 50-epoch 0.5B run (v4 generation), the
+eval-aware controller issued eval-driven decays every two epochs for
+five consecutive episodes while held-out loss diverged, driving the
 cumulative LR multiplier along
 $1.0 \to 0.49 \to 0.34 \to 0.24 \to 0.17$, breaching the controller's
 own nominal minimum ($0.3$) because the eval-driven pathway applied
@@ -155,41 +168,52 @@ multiplier to $m_{\min}{=}0.5$ (Eq.~\ref{eq:floor}) and refuses
 further eval-driven decays at the floor. Validation proceeded in
 three stages: (i) unit tests on a stubbed trainer assert the floor is
 respected exactly ($m$ lands on $0.5$, never below; optimizer LRs
-match base $\times$ floor) among 138 checks; (ii) a dedicated 5-epoch
-GPU run with an unreachable gate reproduced the failing regime
-($\lambda{=}0$ throughout, eval rising) and showed one eval-driven
-decay ($1.0 \to 0.7$) with the floor never breached; (iii) both
-production runs in this paper clamp at $0.5$ and hold
-(Fig.~\ref{fig:dyn}c) while memorization proceeds unimpeded to
-saturation at 7B.
+match base $\times$ floor); (ii) a dedicated 5-epoch GPU run with an
+unreachable gate reproduced the failing regime ($\lambda{=}0$
+throughout, eval rising) and showed one eval-driven decay
+($1.0 \to 0.7$) with the floor never breached; (iii) the
+50-epoch-class production runs that used the controller clamped at
+$0.5$ and held for the remainder of training while memorization
+proceeded unimpeded. The present grid fixes the LR schedule (cosine)
+so that the engagement schedule is the only active intervention; the
+controller ships with the stack and its decisions are logged
+whenever it is enabled.
 
-\section{Artifact Map and Log Reconstruction}
+\section{Artifact Map}
 \label{app:artifacts}
 
-\textbf{Hugging Face Hub (user \texttt{codewithdark}).}
-\texttt{mlpr-qwen2.5-0.5b-instruct-50ep-adaptive-v4}: final adapter,
-probe head (\texttt{probe\_head.pt}), tokenizer, and full telemetry
-(\texttt{gate\_history.json}, \texttt{adaptive\_history.json},
-\texttt{trainer\_state.json} with 1{,}925 log entries,
-\texttt{training\_log.txt}, 1.5\,MB). The 7B repository
-\texttt{mlpr-qwen2.5-7b-instruct-50ep-adaptive-v4} holds the epoch-26
-adapter (the trainer's last in-progress hub commit) and the training
-log through epoch 26; its per-epoch gate and controller records for
-epochs 1--25 are parsed from the log's structured
-\texttt{[MEM\ GATE]} / \texttt{[ADAPTIVE]} lines, and the epoch-27
-record was captured verbatim from the live log stream before
-termination. \textbf{Weights \& Biases} (project
-\texttt{knowing\_using\_gap}): runs
-\texttt{mlpr-qwen2.5-0.5b-50ep-adaptive-v4} and
-\texttt{mlpr-qwen2.5-7b-50ep-adaptive-v4} with per-step losses,
-learning rates, gradient norms, per-epoch adaptive decisions, LoRA/probe
-matrix panels every 5 epochs (168 heatmaps each of $B$, $A$, and
-$\Delta W$), and locked checkpoint artifacts.
+\textbf{Production grid (this paper).} Each of the ten runs is
+identified by a W\&B run in project \texttt{knowing\_using\_gap}
+(entity \texttt{codewithdark-islamia-college-peshawar}) and a run
+directory on the persistent volume holding:
+\texttt{summary.json} (endpoint block),
+\texttt{gate\_history.json} (per-epoch gate evaluations),
+\texttt{eval\_details.json} (256 per-sample final records per channel
+with \texttt{em}/\texttt{contains}/\texttt{token\_f1}/
+\texttt{token\_acc} and \texttt{eval\_type}, the McNemar inputs),
+\texttt{training\_log.txt} (complete stdout with per-step loss
+dicts), \texttt{adapter\_model.safetensors}, and
+\texttt{probe\_head.pt}. Run IDs: \texttt{8nqeb64s} (0.5B SFT),
+\texttt{8bbmxqsy} (0.5B MLPR), \texttt{t363oowy} (1.7B SFT censored),
+\texttt{9s50ruuf} (1.7B SFT), \texttt{88gpa338} (1.7B MLPR censored),
+\texttt{kxjrtb71} (1.7B probe-gate rep.\,2), \texttt{ugii4c9x}
+(1.7B output-gate never-crossed), \texttt{obcthrqo} (1.7B
+$\lambda$-decay), \texttt{myrqofvo} (1.7B probe-gate rep.\,1),
+\texttt{vx5w4obp} (1.7B output-gate late-onset).
+\textbf{Earlier-generation artifacts (v4).} The 50-epoch 0.5B run and
+the budget-truncated large-model run behind the decay-spiral case
+study (Appendix~\ref{app:spiral}) and the scale-saturation pilots
+cited in Section~\ref{sec:res:sat} are on the Hugging Face Hub (user
+\texttt{codewithdark}) as
+\texttt{mlpr-qwen2.5-0.5b-instruct-50ep-adaptive-v4} and
+\texttt{mlpr-qwen2.5-7b-instruct-50ep-adaptive-v4}, with gate and
+controller histories and full training logs.
 \textbf{Codebase}: the released zip contains the full training stack
-(\texttt{src/} with probe, LoRA setup, gate callback, adaptive
-controller, likelihood evaluator, W\&B matrix logger), the Modal
-deployment (\texttt{modal\_train.py}), the dataset generator, the
-analysis and figure scripts, and this paper under \texttt{paper/}.
+(\texttt{src/} with probe, LoRA setup, gate callback, engagement
+schedules, adaptive controller, likelihood evaluator, W\&B logger),
+the Modal deployment (\texttt{modal\_train.py}), the dataset
+generator, the analysis and figure scripts (including the McNemar
+module), and this paper under \texttt{paper/}.
 
 \section{The Likelihood Recall Metric in Detail}
 \label{app:lfmetric}
@@ -200,10 +224,14 @@ single teacher-forced forward pass over
 $\texttt{prompt} \oplus \texttt{answer}$ with left padding and records
 (i) strict first-answer-token exact match \eqref{eq:lf}, and (ii) the
 fraction of answer tokens whose greedy next-token prediction matches
-the reference (token recall). Both are macro-averaged over the
-subsample. Compared with free-generation EM, this removes decoding
-length, format, and repetition effects; the residual gap between token
-recall and strict EM isolates single-token identity from multi-token
-assembly. Substring containment of the target in the free generation
-complements both by detecting \emph{stored but misframed} answers---the
-$76.5\%$ vs.\ $2\%$ contrast in Table~\ref{tab:main}.
+the reference (token recall; \texttt{token\_acc} in the released
+records). Both are macro-averaged over the subsample. Compared with
+free-generation EM, this removes decoding length, format, and
+repetition effects. In the production grid the strict teacher-forced
+EM and substring containment coincide on every arm (the free
+generations either emit the exact entity string or miss entirely), so
+the storage-vs-assembly contrast is carried by token recall
+($0.99$ in saturated arms) versus free-generation EM
+($\le 0.012$ everywhere): the identity is stored and linearly
+decodable, and its first answer token is one greedy step away, yet
+free decoding almost never assembles it.

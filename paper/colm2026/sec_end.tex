@@ -6,88 +6,107 @@ argue for treating the gap between internal recall and behavioral
 production as a measurable training-time quantity rather than a
 post-hoc evaluation surprise. The likelihood metric and the mid-layer
 probe are cheap (a forward pass per epoch; a linear head), and together
-they separate three regimes that aggregate observables conflate:
-not-yet-known, known-but-unsayable, and said-but-not-transferred.
-Monitoring the saturation curve converts ``when do we stop
-memorizing?'' from a guess into a threshold.
+they separate regimes that aggregate observables conflate:
+not-yet-known, known-but-unsayable, and---in the $\lambda$-decay
+arm---representation-known-but-output-never-formed.
 
-\textbf{Scale determines whether gating is possible.} The 0.5B result
-is as informative as the 7B one: below some capacity--data interaction
-threshold, likelihood recall plateaus far under $\tau_0$ and a
-saturation-gated intervention simply never activates. Gate-based
-regularization thus has a minimum viable scale (or data volume) for a
-given corpus, and pilots below that scale will silently do nothing
-beyond SFT.
+\textbf{The gate signal and its schedule are design axes.} The same
+formal gate behaves very differently depending on what it watches and
+for how long. An output-likelihood gate defers engagement until the
+model can recall---principled, but its onset is stochastic (one
+replicate crossed at epoch 17; another never crossed), and a schedule
+that silently never fires is indistinguishable from plain SFT. The
+probe-saturation gate fires early at both scales because a fresh
+linear head measures representation organization rather than LM-head
+surface learning. What decided the outcome was not whether probe
+gradients flowed, but \emph{when and for how long}: late,
+output-triggered engagement at full weight matched SFT recall; early
+sustained injection was high-variance and below SFT; and transient
+injection that decayed to zero left the model at $0.012$ recall while
+its mid layer organized the entities at $94.8\%$ decodability---even
+though the arm then received twelve epochs of pure SFT and never
+recovered. Probe regularization should therefore engage \emph{after}
+saturation and then \emph{persist}; both halves of that prescription
+are testable with the released harness.
 
-\textbf{Answer assembly is the bottleneck, not storage.} The
-containment finding ($76.5\%$ substring vs.\ $2\%$ EM at 7B,
-token recall $98.7\%$) localizes the production failure in surface
-realization, consistent with paraphrase-consistency findings
-\citep{elazar2021measuring,mallen2023pararel}; it argues for
-complementing the post-activation phase with assembly-oriented
-objectives such as format-canonical decoding or constrained emission.
+\textbf{The saying gap is invariant to what we varied.} No arm at
+either scale exceeded $1.2\%$ free-generation EM or $0.4\%$
+generalization EM, while token-level recall under forcing reached
+$99\%$: the gap lives at the representation-to-surface interface, and
+closing it plausibly requires assembly-oriented objectives or decoding
+interventions rather than better-organized storage.
 
 \textbf{Controllers must not fight the phenomenon.} The decay-spiral
-case study is a small but concrete instance of a general design error:
-an adaptive controller aimed at a target regime treated that regime's
-signature (rising held-out loss) as a fault and drove the system away
-from it. The floor repair is deliberately crude---one constant---but it
-converts the controller from opposed to subordinate: damp instability,
-never extinguish the dynamics under study.
+case study (Appendix~\ref{app:spiral}) is a small but concrete
+instance of a general design error: an adaptive controller aimed at a
+target regime treated that regime's signature as a fault and drove the
+system away from it. The floor repair converts the controller from
+opposed to subordinate: damp instability, never extinguish the
+dynamics under study.
 
 \section{Limitations}
 \label{sec:limitations}
 
 Our findings are bounded in four ways. First, the corpus is synthetic
-and single-domain: entity-question memorization is the cleanest setting
-for the recall metric, but crossing epochs and gap magnitudes will
-differ on natural knowledge (e.g., long-tail Wikipedia facts
-\citep{kandpal2023large}). Second, the 7B regularized phase is
-truncated at three epochs of $\lambda>0$; all claims about it are
-stability observations, not outcome claims. Third, the probe is linear
-and trained on the corpus it monitors; control-task or cross-corpus
-validation \citep{hewitt2019control} would strengthen the monitoring
-claim, although the held-out-entity accuracy already provides a
-built-in negative control. Fourth, all experiments use LoRA at a single
-rank; the floor value $m_{\min}{=}0.5$ is a robustness prior rather than
-a tuned constant, and other ranks may shift the anatomy split.
+and single-domain: crossing epochs and gap magnitudes will differ on
+natural knowledge (e.g., long-tail Wikipedia facts
+\citep{kandpal2023large}). Second, each schedule is represented by one
+or two replicates, run-to-run variance at 1.7B is itself large
+(sustained arms: $0.109$ vs.\ $0.805$), and GPU non-determinism makes
+even same-seed runs diverge in takeoff epoch; our schedule claims rest
+on paired tests against a common SFT control, but single-run
+comparisons at this scale are unreliable. Third, the 24-epoch budget
+censors late-takeoff arms: the never-engaged replicate was still
+rising when it ended ($0.227$), so its endpoint is a lower bound.
+Fourth, the probe is linear and trained on the corpus it monitors,
+all experiments use LoRA at a single rank, and the mechanism behind
+the decay-arm collapse---like that of the sustained arms'
+variance---is hypothesized rather than established; the released
+per-step telemetry is intended to make such follow-ups cheap.
 
 \section{Conclusion}
 \label{sec:conclusion}
 
 We presented MLPR, a training-time instrumentation-and-control layer
 that makes the knowing--using gap measurable online and acts on it
-through a saturation gate. In a controlled two-scale study we showed
-that recall saturation---and therefore gate activation---is
-scale-dependent, captured the activation transient live at 7B, measured
-a sharp knowing/saying dissociation localized in answer assembly,
-identified probes as early-warning monitors, documented and repaired an
-unbounded damping failure in eval-aware controllers, and confirmed from
-released adapters that memorization updates concentrate in upper-layer
-MLP projections. Completing the regularized 7B phase and transferring
-the instruments to natural knowledge corpora are immediate next steps.
+through a saturation gate. In a two-scale engagement-schedule grid we
+showed that the gate signal decides when engagement is possible
+(probe decodability fires at epochs 3--6, the output signal 11--16
+epochs later or never), that the engagement schedule decides whether
+memorization completes at all (final recall $0.012$--$0.934$ under
+identical data, seed, and optimizer, with late output-triggered
+engagement reaching SFT parity by McNemar test), captured the gate's
+live re-evaluation transient, measured a knowing/saying dissociation
+that no schedule closes (generalization EM $\le 0.4\%$ everywhere)
+and a representation-without-output regime induced by transient
+engagement, and confirmed from released adapters that memorization
+updates concentrate in upper-layer MLP projections. Transferring the
+instruments to natural corpora, scaling replicates beyond two per
+arm, and pairing the regularized phase with assembly-oriented
+objectives are immediate next steps.
 
 \section*{Ethics Statement}
 This work studies memorization dynamics, which sit at the intersection
 of capability and privacy: the same teacher-forced recall metric that
 monitors learning could, in adversarial hands, audit models for
-memorized personal data, and the containment/exact-match dissociation
-we document cautions that exact-match audits may \emph{underestimate}
+memorized personal data, and the recall/production dissociation we
+document cautions that exact-match audits may \emph{underestimate}
 what a model has stored. We release only synthetic entities invented
-for this study, no personal or web-scraped content, and we believe
-better monitoring instruments ultimately serve privacy auditing and
-data governance more than they enable extraction.
+for this study, and we believe better monitoring instruments
+ultimately serve privacy auditing and data governance more than they
+enable extraction.
 
 \section*{Reproducibility Statement}
-All code (dataset generator, trainer, callbacks, controller, Modal
-deployment, analysis, and figure scripts) is included in the released
-codebase, together with the exact training configurations of
-Appendix~\ref{app:hyper}. Model adapters, probe heads, per-epoch gate
-and controller histories, and complete training logs for both runs are
-uploaded to the Hugging Face Hub (Appendix~\ref{app:artifacts}
-lists every artifact and its provenance). The 7B run was terminated by
-a compute-budget limit during epoch 28; its post-epoch-26 telemetry in
-the Hub is a mid-run snapshot committed by the training loop, and the
-epoch-27 records cited here were read from the live run log before
-termination. Per-epoch numbers in every figure and in
-Appendix~\ref{app:curves} are traceable to these artifacts.
+All code (dataset generator, trainer, callbacks, gate and engagement
+schedules, controller, Modal deployment, analysis, McNemar module, and
+figure scripts) is included in the released codebase, together with
+the exact configurations of Appendix~\ref{app:hyper}. For every
+production run we release the final adapter and probe head, the
+per-epoch gate history, the complete stdout log, and a per-sample
+final evaluation record whose prompt-aligned correctness vectors are
+the direct inputs of every McNemar test reported here; per-epoch
+numbers in every figure and in Appendix~\ref{app:curves} are
+traceable to these artifacts, identified by their Weights \& Biases
+IDs in Appendix~\ref{app:artifacts}. The earlier 50-epoch-class runs
+behind the decay-spiral case study and the scale-saturation pilots
+are the v4-generation artifacts also listed there.
