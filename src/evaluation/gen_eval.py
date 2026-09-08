@@ -70,14 +70,25 @@ def compute_token_f1(prediction: str, target: str) -> float:
 
 
 def aggregate_metrics(results: List[Dict]) -> Dict[str, float]:
-    """Mean EM / contains / token-F1 over a results list from the evaluators."""
+    """Mean EM / contains / token-F1 over a results list from the evaluators.
+
+    Also aggregates the validity-aware variants (em_any / contains_any)
+    when the records carry them (v3: multi-answer queries scored against
+    the full valid-answer set instead of one arbitrary label).
+    """
     if not results:
-        return {"exact_match": 0.0, "contains_match": 0.0, "token_f1": 0.0}
+        return {"exact_match": 0.0, "contains_match": 0.0, "token_f1": 0.0,
+                "exact_match_any": 0.0, "contains_match_any": 0.0}
     n = len(results)
     return {
         "exact_match": sum(float(r.get("em", 0.0)) for r in results) / n,
         "contains_match": sum(float(r.get("contains", 0.0)) for r in results) / n,
         "token_f1": sum(float(r.get("token_f1", 0.0)) for r in results) / n,
+        "exact_match_any": sum(float(r.get("em_any", r.get("em", 0.0)))
+                               for r in results) / n,
+        "contains_match_any": sum(float(r.get("contains_any",
+                                               r.get("contains", 0.0)))
+                                  for r in results) / n,
     }
 
 
@@ -135,6 +146,47 @@ def _extract_targets(batch_data):
         if batch_data and all(key in item for item in batch_data):
             return [item[key] for item in batch_data]
     raise KeyError(f"No target field found in batch items; tried {candidate_keys}")
+
+
+def _extract_valid_answers(batch_data):
+    """
+    Extract per-item valid-answer lists from a batch (v3 scoring).
+
+    Multi-answer queries (e.g. "name one audit required for a product issued
+    by {inst}" -- 10 valid audits) were scored against ONE arbitrary label in
+    v1/v2, which capped exact match far below true knowledge. The v2 dataset
+    generator stores the full valid set in a `valid_answers` field; scoring
+    ANY of them correct (em_any / contains_any) separates "cannot recall"
+    from "recalled a different valid answer".
+
+    Returns a list aligned with the batch items; missing fields yield None
+    (caller falls back to single-target scoring).
+    """
+    if isinstance(batch_data, dict):
+        vals = batch_data.get("valid_answers")
+        if vals is None:
+            n = len(batch_data.get("text", [])) \
+                or len(batch_data.get("label_text", [])) or 0
+            return [None] * n
+        out = []
+        for v in vals:
+            if v is None:
+                out.append(None)
+            elif isinstance(v, (list, tuple)):
+                out.append([str(x) for x in v])
+            else:
+                out.append([str(v)])
+        return out
+    out = []
+    for item in batch_data:
+        v = item.get("valid_answers") if isinstance(item, dict) else None
+        if v is None:
+            out.append(None)
+        elif isinstance(v, (list, tuple)):
+            out.append([str(x) for x in v])
+        else:
+            out.append([str(v)])
+    return out
 
 
 def _strip_answer_suffix(text: str) -> str:
@@ -256,6 +308,34 @@ def _score_row(generated: str, target: str) -> Dict:
     }
 
 
+def _score_row_any(generated: str, target: str,
+                   valid_answers: Optional[List[str]]) -> Dict:
+    """Score against the full valid-answer set when available (v3).
+
+    Adds em_any / contains_any on top of the v2 single-target metrics. When
+    no valid list exists the validity-aware scores mirror the single-target
+    ones, so downstream aggregation is uniform across datasets.
+    """
+    row = _score_row(generated, target)
+    prediction = row["prediction"]
+    if not valid_answers:
+        row["em_any"] = row["em"]
+        row["contains_any"] = row["contains"]
+        row["token_f1_any"] = row["token_f1"]
+        return row
+    # Best partial credit across the valid set
+    f1s = [compute_token_f1(prediction, v) for v in valid_answers]
+    row["em_any"] = any(compute_exact_match(prediction, v) for v in valid_answers)
+    row["contains_any"] = any(compute_contains_match(prediction, v)
+                              for v in valid_answers)
+    row["token_f1_any"] = max(f1s) if f1s else row["token_f1"]
+    # also record the single best-matching valid target for diagnostics
+    best = max(valid_answers, key=lambda v: compute_token_f1(prediction, v)) \
+        if valid_answers else target
+    row["best_valid_target"] = best
+    return row
+
+
 # ------------------------------------------------------------------ evaluators
 
 @torch.no_grad()
@@ -287,6 +367,7 @@ def evaluate_memorization(
         else:
             texts = [item["text"] for item in batch_data]
         targets = _extract_targets(batch_data)
+        valid_lists = _extract_valid_answers(batch_data)
 
         # Feed the question only (strip the " Answer: <label>" training suffix)
         prompts = [_strip_answer_suffix(t) for t in texts]
@@ -296,11 +377,16 @@ def evaluate_memorization(
         for j, (generated, target) in enumerate(zip(generations, targets)):
             row = {"text": texts[j] if isinstance(texts, list) else texts,
                    "prompt": prompts[j], "target": target}
-            row.update(_score_row(generated, target))
-            correct += int(row["em"])
+            row.update(_score_row_any(generated, target, valid_lists[j]))
+            # Headline accuracy is validity-aware when valid sets exist
+            correct += int(row.get("em_any", row["em"]))
             results.append(row)
 
     accuracy = correct / max(total, 1)
+    for row in results:
+        row.setdefault("em_any", row["em"])
+        row.setdefault("contains_any", row["contains"])
+        row.setdefault("token_f1_any", row["token_f1"])
     return accuracy, results
 
 
@@ -336,6 +422,7 @@ def evaluate_generalization(
             texts = [item["text"] for item in batch_data]
             relations = [item.get("relations", ["unknown"]) for item in batch_data]
         targets = _extract_targets(batch_data)
+        valid_lists = _extract_valid_answers(batch_data)
 
         # Gen texts are bare questions -- nothing to strip
         generations = _generate_continuations(
@@ -344,14 +431,19 @@ def evaluate_generalization(
         for j, (generated, target) in enumerate(zip(generations, targets)):
             row = {"text": texts[j] if isinstance(texts, list) else texts,
                    "prompt": texts[j], "target": target}
-            row.update(_score_row(generated, target))
+            row.update(_score_row_any(generated, target, valid_lists[j]))
             rel = relations[j] if isinstance(relations, list) else relations
             row["relations"] = rel
             row["type"] = "multi-hop"
-            correct += int(row["em"])
+            # Headline accuracy is validity-aware when valid sets exist
+            correct += int(row.get("em_any", row["em"]))
             results.append(row)
 
     accuracy = correct / max(total, 1)
+    for row in results:
+        row.setdefault("em_any", row["em"])
+        row.setdefault("contains_any", row["contains"])
+        row.setdefault("token_f1_any", row["token_f1"])
     return accuracy, results
 
 
@@ -401,6 +493,7 @@ def evaluate_memorization_likelihood(
         else:
             texts = [item["text"] for item in batch_data]
         targets = _extract_targets(batch_data)
+        valid_lists = _extract_valid_answers(batch_data)
         prompts = [_strip_answer_suffix(t) for t in texts]
 
         # Full sequence = prompt + " Answer:" + target; the answer token span
@@ -453,7 +546,22 @@ def evaluate_memorization_likelihood(
                 "token_f1": tok_acc,    # token-level partial credit
                 "token_acc": tok_acc,
             }
-            correct += int(strict)
+            # v3: validity-aware scoring for multi-answer items -- the argmax
+            # answer may name a DIFFERENT valid entity than the trained label.
+            v_list = valid_lists[j] if j < len(valid_lists) else None
+            if v_list:
+                row["em_any"] = any(
+                    compute_exact_match(pred_text, v) for v in v_list)
+                row["contains_any"] = any(
+                    compute_contains_match(pred_text, v) for v in v_list)
+                row["token_f1_any"] = max(
+                    compute_token_f1(pred_text, v) for v in v_list)
+            else:
+                row["em_any"] = strict
+                row["contains_any"] = strict
+                row["token_f1_any"] = tok_acc
+            # likelihood headline counts validity-aware hits
+            correct += int(row["em_any"])
             results.append(row)
 
     accuracy = correct / max(len(results), 1)
