@@ -46,12 +46,6 @@ Damai Dai, Li~Dong, Yaru Hao, Zhifang Sui, Baobao Chang, and Furu Wei.
 \newblock In \emph{Proceedings of the 60th Annual Meeting of the Association
   for Computational Linguistics (ACL)}, 2022.
 
-\bibitem[De~Cao et~al.(2021)De~Cao, Aziz, and Titov]{decao2021editing}
-Nicola De~Cao, Wilker Aziz, and Ivan Titov.
-\newblock Editing factual knowledge in language models.
-\newblock In \emph{Proceedings of the 2021 Conference on Empirical Methods in
-  Natural Language Processing (EMNLP)}, 2021.
-
 \bibitem[Elazar et~al.(2021)Elazar, Kassner, Ravfogel, Frederick, August,
   Srikumar, Stanovsky, Tsvetkov, Strubell, et~al.]{elazar2021measuring}
 Yanai Elazar, Nora Kassner, Shauli Ravfogel, Abhilasha Frederick, Tim August,
@@ -61,13 +55,6 @@ Yanai Elazar, Nora Kassner, Shauli Ravfogel, Abhilasha Frederick, Tim August,
 \newblock \emph{Transactions of the Association for Computational Linguistics},
   2021.
 \newblock ParaRel benchmark.
-
-\bibitem[Elhage et~al.(2021)Elhage, Nanda, Olsson, Henighan, Joseph,
-  et~al.]{elhage2021mathematical}
-Nelson Elhage, Neel Nanda, Catherine Olsson, Tom Henighan, Nicholas Joseph,
-  et~al.
-\newblock A mathematical framework for transformer circuits.
-\newblock Transformer Circuits Thread, 2021.
 
 \bibitem[Geva et~al.(2021)Geva, Schuster, Berant, and Levy]{geva2021ffn}
 Mor Geva, Roei Schuster, Jonathan Berant, and Omer Levy.
@@ -111,6 +98,12 @@ Alex Mallen, Akari Asai, Victor Zhong, Rajarshi Das, Daniel Khashabi, and
 \newblock In \emph{Proceedings of the 61st Annual Meeting of the Association
   for Computational Linguistics (ACL)}, 2023.
 
+\bibitem[McNemar(1947)]{mcnemar1947}
+Quinn McNemar.
+\newblock Note on the sampling error of the difference between correlated
+  proportions or percentages.
+\newblock \emph{Psychometrika}, 12\penalty0 (2):\penalty0 153--157, 1947.
+
 \bibitem[Meng et~al.(2022)Meng, Bau, Andonian, and Belinkov]{meng2022rome}
 Kevin Meng, David Bau, Alex Andonian, and Yonatan Belinkov.
 \newblock Locating and editing factual associations in {GPT}.
@@ -151,6 +144,11 @@ Kushal Tirumala, Arash Markosyan, Luke Zettlemoyer, and Armen Aghajanyan.
   large language models.
 \newblock In \emph{Advances in Neural Information Processing Systems
   (NeurIPS)}, volume~35, 2022.
+
+\bibitem[Yang et~al.(2025)]{qwen3}
+An~Yang et~al.
+\newblock Qwen3 technical report.
+\newblock \emph{arXiv preprint arXiv:2505.09388}, 2025.
 
 \bibitem[Zhang et~al.(2017)Zhang, Bengio, Hardt, Recht, and
   Vinyals]{zhang2017understanding}
